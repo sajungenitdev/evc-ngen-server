@@ -20,6 +20,13 @@ const solutionRoutes = require('./routes/solution.routes');
 const industryRoutes = require('./routes/industry.routes');
 const trainingRoutes = require('./routes/training.routes');
 const trainingCategoryRoutes = require('./routes/trainingCategory.routes');
+const heroSectionRoutes = require('./routes/heroSection.routes');
+const statsRoutes = require('./routes/stats.routes');
+const foundationRoutes = require('./routes/foundation.routes');
+const aboutRoutes = require('./routes/about.routes');
+
+
+
 
 
 
@@ -135,6 +142,11 @@ app.use('/api/solutions', solutionRoutes);
 app.use('/api/industries', industryRoutes);
 app.use('/api/training', trainingRoutes);
 app.use('/api/training-categories', trainingCategoryRoutes);
+app.use('/api/hero', heroSectionRoutes);
+app.use('/api/stats', statsRoutes);
+app.use('/api/foundation', foundationRoutes);
+app.use('/api/about', aboutRoutes);
+
 
 // ============================================
 // HEALTH CHECK
