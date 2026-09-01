@@ -65,7 +65,9 @@ const uploadProductImages = (req, res, next) => {
     });
 };
 
-// ✅ FIXED: Upload to ImgBB middleware (handles req.files, not req.file)
+// src/middleware/upload.js - Updated uploadToImgBBMiddleware
+
+// ✅ UPDATED: Upload to ImgBB middleware - handles ALL image fields
 const uploadToImgBBMiddleware = async (req, res, next) => {
     try {
         console.log('🖼️ Starting ImgBB upload...');
@@ -76,7 +78,6 @@ const uploadToImgBBMiddleware = async (req, res, next) => {
             const file = req.files['image'][0];
             console.log(`📸 Uploading main image: ${file.originalname} (${file.size} bytes)`);
             
-            // Check if file exists
             if (!fs.existsSync(file.path)) {
                 console.error('❌ Main image file not found:', file.path);
                 return res.status(400).json({
@@ -87,7 +88,7 @@ const uploadToImgBBMiddleware = async (req, res, next) => {
 
             const result = await uploadToImgBB(
                 file.path,
-                `product-${Date.now()}`
+                `solution-${Date.now()}`
             );
             
             if (result.success) {
@@ -103,7 +104,6 @@ const uploadToImgBBMiddleware = async (req, res, next) => {
                 });
             }
             
-            // Clean up temp file with delay
             await new Promise(resolve => setTimeout(resolve, 200));
             if (fs.existsSync(file.path)) {
                 try {
@@ -113,11 +113,92 @@ const uploadToImgBBMiddleware = async (req, res, next) => {
                     console.warn('Could not delete temp file:', unlinkError.message);
                 }
             }
-        } else {
-            console.warn('⚠️ No main image found in req.files[\'image\']');
         }
 
-        // ✅ Process gallery images from req.files['galleryImages']
+        // ✅ Process section2 image from req.files['section2Image']
+        if (req.files && req.files['section2Image'] && req.files['section2Image'].length > 0) {
+            const file = req.files['section2Image'][0];
+            console.log(`📸 Uploading section2 image: ${file.originalname} (${file.size} bytes)`);
+            
+            if (!fs.existsSync(file.path)) {
+                console.warn('⚠️ Section2 image file not found:', file.path);
+            } else {
+                const result = await uploadToImgBB(
+                    file.path,
+                    `section2-${Date.now()}`
+                );
+                
+                if (result.success) {
+                    req.imgbbSection2Image = result.url;
+                    req.imgbbSection2DeleteUrl = result.deleteUrl;
+                    console.log('✅ Section2 image uploaded:', result.url);
+                } else {
+                    console.error('❌ Section2 image upload failed:', result.error);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 200));
+                if (fs.existsSync(file.path)) {
+                    try {
+                        fs.unlinkSync(file.path);
+                    } catch (unlinkError) {
+                        console.warn('Could not delete section2 temp file:', unlinkError.message);
+                    }
+                }
+            }
+        }
+
+        // ✅ Process tab images from req.files['tabImage_*']
+        // Find all tab image fields
+        const tabImageKeys = Object.keys(req.files || {}).filter(key => key.startsWith('tabImage_'));
+        
+        if (tabImageKeys.length > 0) {
+            req.imgbbTabImages = [];
+            req.imgbbTabDeleteUrls = [];
+            
+            console.log(`📸 Uploading ${tabImageKeys.length} tab images...`);
+            
+            // Sort keys to maintain order
+            tabImageKeys.sort((a, b) => {
+                const indexA = parseInt(a.replace('tabImage_', ''));
+                const indexB = parseInt(b.replace('tabImage_', ''));
+                return indexA - indexB;
+            });
+            
+            for (const key of tabImageKeys) {
+                const file = req.files[key][0];
+                
+                if (!fs.existsSync(file.path)) {
+                    console.warn(`⚠️ Tab image file not found: ${file.path}`);
+                    continue;
+                }
+                
+                const result = await uploadToImgBB(
+                    file.path,
+                    `tab-${Date.now()}-${key}`
+                );
+                
+                if (result.success) {
+                    req.imgbbTabImages.push(result.url);
+                    req.imgbbTabDeleteUrls.push(result.deleteUrl);
+                    console.log(`✅ ${key} uploaded:`, result.url);
+                } else {
+                    console.error(`❌ ${key} upload failed:`, result.error);
+                    req.imgbbTabImages.push(null);
+                    req.imgbbTabDeleteUrls.push(null);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 200));
+                if (fs.existsSync(file.path)) {
+                    try {
+                        fs.unlinkSync(file.path);
+                    } catch (unlinkError) {
+                        console.warn(`Could not delete ${key} temp file:`, unlinkError.message);
+                    }
+                }
+            }
+        }
+
+        // ✅ Process gallery images (for products/accessories)
         if (req.files && req.files['galleryImages'] && req.files['galleryImages'].length > 0) {
             req.imgbbGalleryUrls = [];
             req.imgbbGalleryDeleteUrls = [];
@@ -145,7 +226,6 @@ const uploadToImgBBMiddleware = async (req, res, next) => {
                     console.error(`❌ Gallery ${i + 1} upload failed:`, result.error);
                 }
                 
-                // Clean up temp file with delay
                 await new Promise(resolve => setTimeout(resolve, 200));
                 if (fs.existsSync(file.path)) {
                     try {
@@ -160,6 +240,8 @@ const uploadToImgBBMiddleware = async (req, res, next) => {
         console.log('✅ ImgBB upload completed');
         console.log('🖼️ Final URLs:', {
             imageUrl: req.imgbbImageUrl || '❌ MISSING',
+            section2Image: req.imgbbSection2Image || '❌ MISSING',
+            tabImages: req.imgbbTabImages?.length || 0,
             galleryCount: req.imgbbGalleryUrls?.length || 0
         });
         
