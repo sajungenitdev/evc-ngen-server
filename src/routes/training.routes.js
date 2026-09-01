@@ -11,7 +11,12 @@ const {
     deleteMultipleTrainings
 } = require('../controllers/training.controller');
 const { protect, admin } = require('../middleware/auth');
-const { uploadIndustryImages, optimizeUploadedImages, handleUploadErrors } = require('../middleware/upload');
+const {
+    uploadIndustryImages,      // Handles 'image' field
+    uploadToImgBBMiddleware,   // ✅ Add ImgBB upload
+    optimizeUploadedImages,
+    handleUploadErrors
+} = require('../middleware/upload');
 
 // ============================================
 // TRAINING ROUTES
@@ -21,14 +26,15 @@ const { uploadIndustryImages, optimizeUploadedImages, handleUploadErrors } = req
 router.get('/', getTrainings);
 router.get('/:id', getTraining);
 
-// Admin only routes
+// Admin only routes with ImgBB upload
 router.post(
     '/',
     protect,
     admin,
-    uploadIndustryImages,  // Reuse existing upload middleware
-    optimizeUploadedImages,
-    handleUploadErrors,
+    uploadIndustryImages,        // 1. Handle files
+    optimizeUploadedImages,     // 2. Optimize images
+    uploadToImgBBMiddleware,    // 3. Upload to ImgBB
+    handleUploadErrors,         // 4. Handle errors
     createTraining
 );
 
@@ -36,9 +42,10 @@ router.put(
     '/:id',
     protect,
     admin,
-    uploadIndustryImages,
-    optimizeUploadedImages,
-    handleUploadErrors,
+    uploadIndustryImages,        // 1. Handle files
+    optimizeUploadedImages,     // 2. Optimize images
+    uploadToImgBBMiddleware,    // 3. Upload to ImgBB
+    handleUploadErrors,         // 4. Handle errors
     updateTraining
 );
 

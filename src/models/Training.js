@@ -86,7 +86,11 @@ const TrainingSchema = new mongoose.Schema(
         isActive: {
             type: Boolean,
             default: true
-        }
+        },
+        imageDeleteUrl: {
+            type: String,
+            default: null,
+        },
     },
     {
         timestamps: true

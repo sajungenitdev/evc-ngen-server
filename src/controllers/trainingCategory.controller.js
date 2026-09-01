@@ -1,6 +1,5 @@
 // src/controllers/trainingCategory.controller.js
 const TrainingCategory = require('../models/TrainingCategory');
-const Training = require('../models/Training');
 const mongoose = require('mongoose');
 
 // ============================================
@@ -10,7 +9,14 @@ exports.createCategory = async (req, res) => {
     try {
         console.log('📦 Creating training category with body:', req.body);
 
-        const { name, description, icon, color, order, isActive } = req.body;
+        const {
+            name,
+            description,
+            icon,
+            color,
+            order,
+            isActive
+        } = req.body;
 
         // ✅ Validate required fields
         if (!name || name.trim() === '') {
@@ -20,14 +26,12 @@ exports.createCategory = async (req, res) => {
             });
         }
 
-        // Generate ID and slug from name
+        // Generate slug from name
         const slug = name.toLowerCase().replace(/\s+/g, '-');
-        const id = name.toLowerCase().replace(/\s+/g, '-');
 
         // Check if category already exists
         const existingCategory = await TrainingCategory.findOne({
             $or: [
-                { id: id },
                 { slug: slug },
                 { name: { $regex: new RegExp(`^${name}$`, 'i') } }
             ]
@@ -36,13 +40,13 @@ exports.createCategory = async (req, res) => {
         if (existingCategory) {
             return res.status(400).json({
                 success: false,
-                message: 'Category with this ID, slug, or name already exists'
+                message: 'Training category with this name or slug already exists'
             });
         }
 
-        // ✅ Create category
+        // ✅ Create training category
         const category = await TrainingCategory.create({
-            id: id,
+            id: slug,
             name: name.trim(),
             slug: slug,
             description: description || '',
@@ -94,29 +98,15 @@ exports.getCategories = async (req, res) => {
             TrainingCategory.countDocuments(query),
             TrainingCategory.find(query)
                 .select('-__v')
-                .sort(search ? { score: { $meta: 'textScore' } } : { [sortBy]: sortDirection })
+                .sort({ [sortBy]: sortDirection })
                 .skip(skip)
                 .limit(Number(limit))
                 .lean()
         ]);
 
-        // Get training count for each category
-        const categoriesWithCount = await Promise.all(
-            categories.map(async (category) => {
-                const count = await Training.countDocuments({
-                    categoryId: category.id,
-                    isActive: true
-                });
-                return {
-                    ...category,
-                    trainingCount: count
-                };
-            })
-        );
-
         res.json({
             success: true,
-            data: categoriesWithCount,
+            data: categories,
             pagination: {
                 total,
                 page: Number(page),
@@ -155,22 +145,9 @@ exports.getCategory = async (req, res) => {
             });
         }
 
-        // Get trainings in this category
-        const trainings = await Training.find({
-            categoryId: category.id,
-            isActive: true
-        })
-            .select('-__v')
-            .sort({ title: 1 })
-            .lean();
-
         res.json({
             success: true,
-            data: {
-                ...category.toJSON(),
-                trainings,
-                trainingCount: trainings.length
-            }
+            data: category
         });
     } catch (error) {
         console.error('Get training category error:', error);
@@ -204,11 +181,16 @@ exports.updateCategory = async (req, res) => {
             });
         }
 
-        const { name, description, icon, color, order, isActive } = req.body;
+        const {
+            name,
+            description,
+            icon,
+            color,
+            order,
+            isActive
+        } = req.body;
 
-        // ✅ Update category
-        const updatedData = {
-            name: name || category.name,
+        const updateData = {
             description: description !== undefined ? description : category.description,
             icon: icon || category.icon,
             color: color || category.color,
@@ -216,14 +198,26 @@ exports.updateCategory = async (req, res) => {
             isActive: isActive !== undefined ? isActive : category.isActive
         };
 
-        // Update ID and slug if name changed
+        // If name is being updated, update slug and id too
         if (name && name !== category.name) {
+            // Check if new name already exists
+            const existingCategory = await TrainingCategory.findOne({
+                name: { $regex: new RegExp(`^${name}$`, 'i') },
+                _id: { $ne: category._id }
+            });
+            if (existingCategory) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Category with this name already exists'
+                });
+            }
             const newSlug = name.toLowerCase().replace(/\s+/g, '-');
-            updatedData.id = newSlug;
-            updatedData.slug = newSlug;
+            updateData.name = name.trim();
+            updateData.id = newSlug;
+            updateData.slug = newSlug;
         }
 
-        Object.assign(category, updatedData);
+        Object.assign(category, updateData);
         await category.save();
 
         res.json({
@@ -260,18 +254,6 @@ exports.deleteCategory = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: 'Training category not found'
-            });
-        }
-
-        // Check if category has trainings
-        const trainingCount = await Training.countDocuments({
-            categoryId: category.id
-        });
-
-        if (trainingCount > 0) {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot delete category. It has ${trainingCount} training programs associated with it.`
             });
         }
 
@@ -317,11 +299,11 @@ exports.toggleCategoryStatus = async (req, res) => {
 
         res.json({
             success: true,
-            message: `Training category ${category.isActive ? 'activated' : 'deactivated'} successfully`,
+            message: `Category ${category.isActive ? 'activated' : 'deactivated'} successfully`,
             data: category
         });
     } catch (error) {
-        console.error('Toggle training category status error:', error);
+        console.error('Toggle category status error:', error);
         res.status(500).json({
             success: false,
             message: error.message
@@ -343,29 +325,6 @@ exports.deleteMultipleCategories = async (req, res) => {
             });
         }
 
-        // Check if any category has trainings
-        const categoriesWithTrainings = await TrainingCategory.find({
-            id: { $in: ids }
-        });
-
-        let hasTrainings = false;
-        for (const category of categoriesWithTrainings) {
-            const count = await Training.countDocuments({
-                categoryId: category.id
-            });
-            if (count > 0) {
-                hasTrainings = true;
-                break;
-            }
-        }
-
-        if (hasTrainings) {
-            return res.status(400).json({
-                success: false,
-                message: 'Some categories have training programs associated. Please remove them first.'
-            });
-        }
-
         const result = await TrainingCategory.deleteMany({
             $or: [
                 { id: { $in: ids } },
@@ -376,11 +335,11 @@ exports.deleteMultipleCategories = async (req, res) => {
 
         res.json({
             success: true,
-            message: `${result.deletedCount} training categories deleted successfully`,
+            message: `${result.deletedCount} categories deleted successfully`,
             deletedCount: result.deletedCount
         });
     } catch (error) {
-        console.error('Delete multiple training categories error:', error);
+        console.error('Delete multiple categories error:', error);
         res.status(500).json({
             success: false,
             message: error.message
