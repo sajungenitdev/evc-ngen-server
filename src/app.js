@@ -24,6 +24,8 @@ const heroSectionRoutes = require('./routes/heroSection.routes');
 const statsRoutes = require('./routes/stats.routes');
 const foundationRoutes = require('./routes/foundation.routes');
 const aboutRoutes = require('./routes/about.routes');
+const solutionSectionRoutes = require('./routes/solutionSection.routes');
+
 
 
 
@@ -146,6 +148,7 @@ app.use('/api/hero', heroSectionRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/foundation', foundationRoutes);
 app.use('/api/about', aboutRoutes);
+app.use('/api/solutions-section', solutionSectionRoutes);
 
 
 // ============================================
