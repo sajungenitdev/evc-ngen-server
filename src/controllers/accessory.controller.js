@@ -4,33 +4,19 @@ const Product = require('../models/Product');
 const Brand = require('../models/Brand');
 const Category = require('../models/Category');
 const mongoose = require('mongoose');
-const fs = require('fs');
-const path = require('path');
+const { deleteFromImgBB } = require('../services/imgbb.service');
 
 // ============================================
-// HELPER: Delete image
+// HELPER: Delete image from ImgBB
 // ============================================
-const deleteImage = (imageUrl) => {
-    if (!imageUrl) return;
-    const filename = imageUrl.split('/').pop();
-    if (!filename) return;
-    const imagePath = path.join(__dirname, '../../uploads/products', filename);
-    if (fs.existsSync(imagePath)) {
-        try {
-            fs.unlinkSync(imagePath);
-            console.log(`Deleted image: ${imagePath}`);
-        } catch (error) {
-            console.error(`Failed to delete image: ${imagePath}`, error);
-        }
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
     }
-};
-
-// ============================================
-// HELPER: Delete multiple images
-// ============================================
-const deleteMultipleImages = (imageUrls) => {
-    if (!imageUrls || imageUrls.length === 0) return;
-    imageUrls.forEach(url => deleteImage(url));
 };
 
 // ============================================
@@ -58,7 +44,7 @@ const getAccessoryDetails = async (accessories) => {
     const [brands, categories, products] = await Promise.all([
         Brand.find({ id: { $in: brandIds } }).lean(),
         Category.find({ id: { $in: categoryIds } }).lean(),
-        Product.find({ id: { $in: productIds } }).select('id name model').lean(),
+        Product.find({ id: { $in: productIds } }).select('id name model imageUrl').lean(),
     ]);
 
     const brandMap = {};
@@ -79,12 +65,15 @@ const getAccessoryDetails = async (accessories) => {
 };
 
 // ============================================
-// CREATE - Create a new accessory with images
+// CREATE - Create a new accessory with ImgBB images
 // ============================================
 exports.createAccessory = async (req, res) => {
     try {
         console.log('📦 Creating accessory with body:', req.body);
-        console.log('📸 Files uploaded:', req.files);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl,
+            galleryUrls: req.imgbbGalleryUrls
+        });
 
         const {
             name,
@@ -208,21 +197,24 @@ exports.createAccessory = async (req, res) => {
             });
         }
 
-        // ✅ Handle main image upload
+        // ✅ Handle main image from ImgBB
         let imageUrl = '';
-        if (req.files && req.files['image'] && req.files['image'].length > 0) {
-            imageUrl = `/uploads/products/${req.files['image'][0].filename}`;
+        let imageDeleteUrl = null;
+        if (req.imgbbImageUrl) {
+            imageUrl = req.imgbbImageUrl;
+            imageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Handle gallery images upload
+        // ✅ Handle gallery images from ImgBB
         let galleryImages = [];
-        if (req.files && req.files['galleryImages'] && req.files['galleryImages'].length > 0) {
-            galleryImages = req.files['galleryImages'].map(file => `/uploads/products/${file.filename}`);
+        let galleryDeleteUrls = [];
+        if (req.imgbbGalleryUrls && req.imgbbGalleryUrls.length > 0) {
+            galleryImages = req.imgbbGalleryUrls;
+            galleryDeleteUrls = req.imgbbGalleryDeleteUrls || [];
         }
 
-        // ✅ If galleryImages was sent as JSON string, parse it
+        // ✅ If galleryImages was sent as JSON string, parse it and merge
         let parsedGalleryImages = parseJSONField(req.body.galleryImages, []);
-        // Merge with uploaded files
         if (galleryImages.length > 0) {
             galleryImages = [...parsedGalleryImages, ...galleryImages];
         } else {
@@ -240,7 +232,9 @@ exports.createAccessory = async (req, res) => {
             categoryId: categoryExists._id,
             categoryLabel: categoryLabel || categoryExists.name,
             imageUrl: imageUrl || '',
+            imageDeleteUrl: imageDeleteUrl,
             galleryImages: galleryImages || [],
+            galleryDeleteUrls: galleryDeleteUrls,
             price: price || 0,
             rating: rating || 0,
             specs: parsedSpecs || [],
@@ -264,7 +258,7 @@ exports.createAccessory = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Accessory created successfully',
+            message: 'Accessory created successfully with ImgBB hosting',
             data: {
                 ...populatedAccessory,
                 brandDetails: brandData,
@@ -274,17 +268,6 @@ exports.createAccessory = async (req, res) => {
         });
     } catch (error) {
         console.error('Create accessory error:', error);
-        // If there's an error and files were uploaded, delete them
-        if (req.files) {
-            if (req.files['image']) {
-                deleteImage(`/uploads/products/${req.files['image'][0].filename}`);
-            }
-            if (req.files['galleryImages']) {
-                req.files['galleryImages'].forEach(file => {
-                    deleteImage(`/uploads/products/${file.filename}`);
-                });
-            }
-        }
         res.status(500).json({
             success: false,
             message: error.message,
@@ -418,13 +401,16 @@ exports.getAccessory = async (req, res) => {
 };
 
 // ============================================
-// UPDATE - Update accessory
+// UPDATE - Update accessory with ImgBB
 // ============================================
 exports.updateAccessory = async (req, res) => {
     try {
         const id = req.params.id;
         console.log('📦 Updating accessory with body:', req.body);
-        console.log('📸 Files uploaded:', req.files);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl,
+            galleryUrls: req.imgbbGalleryUrls
+        });
 
         let accessory = await Accessory.findOne({ id: id });
         if (!accessory && mongoose.Types.ObjectId.isValid(id)) {
@@ -468,23 +454,26 @@ exports.updateAccessory = async (req, res) => {
             }
         }
 
-        // ✅ Handle main image upload
-        if (req.files && req.files['image'] && req.files['image'].length > 0) {
-            // Delete old image if it exists
-            if (accessory.imageUrl) {
-                deleteImage(accessory.imageUrl);
+        // ✅ Handle main image from ImgBB
+        if (req.imgbbImageUrl) {
+            // Delete old image from ImgBB
+            if (accessory.imageDeleteUrl) {
+                await deleteImageFromImgBB(accessory.imageDeleteUrl);
             }
-            updateData.imageUrl = `/uploads/products/${req.files['image'][0].filename}`;
+            updateData.imageUrl = req.imgbbImageUrl;
+            updateData.imageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Handle gallery images upload
-        if (req.files && req.files['galleryImages'] && req.files['galleryImages'].length > 0) {
-            // Delete old gallery images
-            if (accessory.galleryImages && accessory.galleryImages.length > 0) {
-                deleteMultipleImages(accessory.galleryImages);
+        // ✅ Handle gallery images from ImgBB
+        if (req.imgbbGalleryUrls && req.imgbbGalleryUrls.length > 0) {
+            // Delete old gallery images from ImgBB
+            if (accessory.galleryDeleteUrls && accessory.galleryDeleteUrls.length > 0) {
+                for (const deleteUrl of accessory.galleryDeleteUrls) {
+                    await deleteImageFromImgBB(deleteUrl);
+                }
             }
-            // Set new gallery images
-            updateData.galleryImages = req.files['galleryImages'].map(file => `/uploads/products/${file.filename}`);
+            updateData.galleryImages = req.imgbbGalleryUrls;
+            updateData.galleryDeleteUrls = req.imgbbGalleryDeleteUrls;
         }
 
         // Update fields
@@ -509,7 +498,7 @@ exports.updateAccessory = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Accessory updated successfully',
+            message: 'Accessory updated successfully with ImgBB',
             data: {
                 ...updatedAccessory,
                 brandDetails: brandData,
@@ -519,16 +508,6 @@ exports.updateAccessory = async (req, res) => {
         });
     } catch (error) {
         console.error('Update accessory error:', error);
-        if (req.files) {
-            if (req.files['image']) {
-                deleteImage(`/uploads/products/${req.files['image'][0].filename}`);
-            }
-            if (req.files['galleryImages']) {
-                req.files['galleryImages'].forEach(file => {
-                    deleteImage(`/uploads/products/${file.filename}`);
-                });
-            }
-        }
         res.status(500).json({
             success: false,
             message: error.message,
@@ -537,7 +516,7 @@ exports.updateAccessory = async (req, res) => {
 };
 
 // ============================================
-// DELETE - Delete accessory
+// DELETE - Delete accessory with ImgBB cleanup
 // ============================================
 exports.deleteAccessory = async (req, res) => {
     try {
@@ -555,21 +534,23 @@ exports.deleteAccessory = async (req, res) => {
             });
         }
 
-        // Delete main image if exists
-        if (accessory.imageUrl) {
-            deleteImage(accessory.imageUrl);
+        // ✅ Delete main image from ImgBB
+        if (accessory.imageDeleteUrl) {
+            await deleteImageFromImgBB(accessory.imageDeleteUrl);
         }
 
-        // Delete gallery images if exist
-        if (accessory.galleryImages && accessory.galleryImages.length > 0) {
-            deleteMultipleImages(accessory.galleryImages);
+        // ✅ Delete gallery images from ImgBB
+        if (accessory.galleryDeleteUrls && accessory.galleryDeleteUrls.length > 0) {
+            for (const deleteUrl of accessory.galleryDeleteUrls) {
+                await deleteImageFromImgBB(deleteUrl);
+            }
         }
 
         await accessory.deleteOne();
 
         res.json({
             success: true,
-            message: 'Accessory deleted successfully',
+            message: 'Accessory and its images deleted successfully from ImgBB',
         });
     } catch (error) {
         console.error('Delete accessory error:', error);

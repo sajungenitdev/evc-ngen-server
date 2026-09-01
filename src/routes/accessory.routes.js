@@ -12,7 +12,9 @@ const {
 } = require('../controllers/accessory.controller');
 const { protect, admin } = require('../middleware/auth');
 const {
-    uploadProductImages, // ✅ Use this for multiple files
+    uploadProductImages,     // ✅ Handles both 'image' and 'galleryImages'
+    uploadToImgBBMiddleware,  // ✅ Upload to ImgBB
+    optimizeUploadedImages,   // ✅ Optimize images
     handleUploadErrors
 } = require('../middleware/upload');
 
@@ -25,13 +27,15 @@ router.get('/', getAccessories);
 router.get('/product/:productId', getAccessoriesByProduct);
 router.get('/:id', getAccessory);
 
-// Admin only routes with image upload
+// Admin only routes with ImgBB upload
 router.post(
     '/',
     protect,
     admin,
-    uploadProductImages, // ✅ Handles both 'image' and 'galleryImages'
-    handleUploadErrors,
+    uploadProductImages,        // 1. Handle files
+    optimizeUploadedImages,     // 2. Optimize images
+    uploadToImgBBMiddleware,    // 3. Upload to ImgBB
+    handleUploadErrors,         // 4. Handle errors
     createAccessory
 );
 
@@ -39,8 +43,10 @@ router.put(
     '/:id',
     protect,
     admin,
-    uploadProductImages, // ✅ Handles both 'image' and 'galleryImages'
-    handleUploadErrors,
+    uploadProductImages,        // 1. Handle files
+    optimizeUploadedImages,     // 2. Optimize images
+    uploadToImgBBMiddleware,    // 3. Upload to ImgBB
+    handleUploadErrors,         // 4. Handle errors
     updateAccessory
 );
 
