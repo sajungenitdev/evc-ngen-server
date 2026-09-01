@@ -6,62 +6,7 @@ const Accessory = require('../models/Accessory');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
-
-// ============================================
-// HELPER: Get brand and category details
-// ============================================
-const getProductDetails = async (products) => {
-    if (!products || products.length === 0) return products;
-
-    const brandIds = [...new Set(products.map(p => p.brand).filter(Boolean))];
-    const categoryIds = [...new Set(products.map(p => p.category).filter(Boolean))];
-
-    const [brands, categories] = await Promise.all([
-        Brand.find({ id: { $in: brandIds } }).lean(),
-        Category.find({ id: { $in: categoryIds } }).lean(),
-    ]);
-
-    const brandMap = {};
-    brands.forEach(b => { brandMap[b.id] = b; });
-
-    const categoryMap = {};
-    categories.forEach(c => { categoryMap[c.id] = c; });
-
-    return products.map(product => ({
-        ...product,
-        brandDetails: brandMap[product.brand] || null,
-        categoryDetails: categoryMap[product.category] || null,
-    }));
-};
-
-// ============================================
-// HELPER: Delete product image
-// ============================================
-const deleteProductImage = (imageUrl) => {
-    if (!imageUrl) return;
-
-    // Extract filename from URL
-    const filename = imageUrl.split('/').pop();
-    if (!filename) return;
-
-    const imagePath = path.join(__dirname, '../../uploads/products', filename);
-    if (fs.existsSync(imagePath)) {
-        try {
-            fs.unlinkSync(imagePath);
-            console.log(`Deleted image: ${imagePath}`);
-        } catch (error) {
-            console.error(`Failed to delete image: ${imagePath}`, error);
-        }
-    }
-};
-
-// ============================================
-// HELPER: Delete multiple images
-// ============================================
-const deleteMultipleImages = (imageUrls) => {
-    if (!imageUrls || imageUrls.length === 0) return;
-    imageUrls.forEach(url => deleteProductImage(url));
-};
+const { deleteFromImgBB } = require('../services/imgbb.service');
 
 // ============================================
 // HELPER: Parse JSON fields from FormData
@@ -76,15 +21,28 @@ const parseJSONField = (field, defaultValue = []) => {
 };
 
 // ============================================
+// HELPER: Delete product image from ImgBB
+// ============================================
+const deleteProductImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
+
+// ============================================
 // CREATE - Create a new product
 // ============================================
-// src/controllers/product.controller.js - Updated createProduct
-
 exports.createProduct = async (req, res) => {
     try {
-        // Log what was received
         console.log('📦 Request body:', req.body);
-        console.log('📸 Files received:', req.files);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl,
+            galleryUrls: req.imgbbGalleryUrls
+        });
 
         const {
             name,
@@ -100,27 +58,30 @@ exports.createProduct = async (req, res) => {
             isActive,
         } = req.body;
 
-        // ✅ Parse JSON fields from FormData
+        // Parse JSON fields
         const specs = parseJSONField(req.body.specs, []);
         const features = parseJSONField(req.body.features, []);
         const technicalDetails = parseJSONField(req.body.technicalDetails, {});
         let galleryImages = parseJSONField(req.body.galleryImages, []);
 
-        // ✅ Handle gallery images from files
-        if (req.files && req.files['galleryImages'] && req.files['galleryImages'].length > 0) {
-            const galleryUrls = req.files['galleryImages'].map(file => `/uploads/products/${file.filename}`);
-            // If galleryImages already has values, merge them (keeping both)
-            if (Array.isArray(galleryImages) && galleryImages.length > 0) {
-                galleryImages = [...galleryImages, ...galleryUrls];
-            } else {
-                galleryImages = galleryUrls;
-            }
+        // ✅ Use ImgBB URLs
+        let imageUrl = '';
+        let imageDeleteUrl = null;
+
+        if (req.imgbbImageUrl) {
+            imageUrl = req.imgbbImageUrl;
+            imageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Handle main image
-        let imageUrl = '';
-        if (req.files && req.files['image'] && req.files['image'].length > 0) {
-            imageUrl = `/uploads/products/${req.files['image'][0].filename}`;
+        // ✅ Handle gallery images from ImgBB
+        let galleryDeleteUrls = [];
+        if (req.imgbbGalleryUrls && req.imgbbGalleryUrls.length > 0) {
+            if (Array.isArray(galleryImages) && galleryImages.length > 0) {
+                galleryImages = [...galleryImages, ...req.imgbbGalleryUrls];
+            } else {
+                galleryImages = req.imgbbGalleryUrls;
+            }
+            galleryDeleteUrls = req.imgbbGalleryDeleteUrls || [];
         }
 
         // ✅ Validate required fields
@@ -182,7 +143,7 @@ exports.createProduct = async (req, res) => {
             const allBrands = await Brand.find({}, 'id name').lean();
             return res.status(404).json({
                 success: false,
-                message: `Brand "${brand}" not found. Available brands: ${allBrands.map(b => b.name).join(', ')}`,
+                message: `Brand "${brand}" not found.`,
                 availableBrands: allBrands.map(b => ({ id: b.id, name: b.name })),
             });
         }
@@ -199,12 +160,12 @@ exports.createProduct = async (req, res) => {
             const allCategories = await Category.find({}, 'id name').lean();
             return res.status(404).json({
                 success: false,
-                message: `Category "${category}" not found. Available categories: ${allCategories.map(c => c.name).join(', ')}`,
+                message: `Category "${category}" not found.`,
                 availableCategories: allCategories.map(c => ({ id: c.id, name: c.name })),
             });
         }
 
-        // ✅ Ensure all technical details have default values
+        // Ensure technical details
         const defaultTechDetails = {
             powerOutput: 'N/A',
             inputVoltage: 'N/A',
@@ -215,12 +176,7 @@ exports.createProduct = async (req, res) => {
             weight: 'N/A'
         };
 
-        const mergedTechnicalDetails = {
-            ...defaultTechDetails,
-            ...technicalDetails
-        };
-
-        // Create product
+        // ✅ Create product with ImgBB URLs
         const product = await Product.create({
             id: name.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now(),
             name,
@@ -230,28 +186,24 @@ exports.createProduct = async (req, res) => {
             category: categoryExists.id,
             categoryId: categoryExists._id,
             categoryLabel: categoryLabel || categoryExists.name,
-            imageUrl: imageUrl || '/uploads/products/default-product.jpg',
+            imageUrl: imageUrl,
+            imageDeleteUrl: imageDeleteUrl,
             galleryImages: galleryImages || [],
+            galleryDeleteUrls: galleryDeleteUrls,
             price: price || 0,
             rating: rating || 0,
             specs: specs || [],
             shortDescription: shortDescription || '',
             description: description || '',
             features: features || [],
-            technicalDetails: mergedTechnicalDetails,
+            technicalDetails: { ...defaultTechDetails, ...technicalDetails },
             stock: stock || 0,
             isActive: isActive !== undefined ? isActive : true,
         });
 
-        // Update brand product count
-        await Brand.findByIdAndUpdate(brandExists._id, {
-            $inc: { productCount: 1 }
-        });
-
-        // Update category product count
-        await Category.findByIdAndUpdate(categoryExists._id, {
-            $inc: { productCount: 1 }
-        });
+        // Update counts
+        await Brand.findByIdAndUpdate(brandExists._id, { $inc: { productCount: 1 } });
+        await Category.findByIdAndUpdate(categoryExists._id, { $inc: { productCount: 1 } });
 
         const populatedProduct = await Product.findById(product._id).lean();
         const [brandData, categoryData] = await Promise.all([
@@ -261,7 +213,7 @@ exports.createProduct = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Product created successfully',
+            message: 'Product created successfully with ImgBB hosting',
             data: {
                 ...populatedProduct,
                 brandDetails: brandData,
@@ -270,17 +222,6 @@ exports.createProduct = async (req, res) => {
         });
     } catch (error) {
         console.error('Create product error:', error);
-        // If there's an error and files were uploaded, delete them
-        if (req.files) {
-            if (req.files['image']) {
-                deleteProductImage(`/uploads/products/${req.files['image'][0].filename}`);
-            }
-            if (req.files['galleryImages']) {
-                req.files['galleryImages'].forEach(file => {
-                    deleteProductImage(`/uploads/products/${file.filename}`);
-                });
-            }
-        }
         res.status(500).json({
             success: false,
             message: error.message || 'Failed to create product',
@@ -337,11 +278,9 @@ exports.getProducts = async (req, res) => {
                 .lean()
         ]);
 
-        const productsWithDetails = await getProductDetails(products);
-
         res.json({
             success: true,
-            data: productsWithDetails,
+            data: products,
             pagination: {
                 total,
                 page: Number(page),
@@ -359,7 +298,7 @@ exports.getProducts = async (req, res) => {
 };
 
 // ============================================
-// READ - Get single product with accessories
+// READ - Get single product
 // ============================================
 exports.getProduct = async (req, res) => {
     try {
@@ -378,13 +317,11 @@ exports.getProduct = async (req, res) => {
             });
         }
 
-        // Get accessories for this product
         const accessories = await Accessory.find({
             parentProductId: product.id,
             isActive: true
         }).lean();
 
-        // Get brand and category
         const [brandData, categoryData] = await Promise.all([
             Brand.findOne({ id: product.brand }).lean(),
             Category.findOne({ id: product.category }).lean(),
@@ -429,30 +366,34 @@ exports.updateProduct = async (req, res) => {
             });
         }
 
-        // Check name conflicts
-        if (updateData.name && updateData.name !== product.name) {
-            const existing = await Product.findOne({
-                name: { $regex: new RegExp(`^${updateData.name}$`, 'i') },
-                _id: { $ne: product._id }
-            });
-            if (existing) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Product with this name already exists',
-                });
+        // ✅ Handle new image from ImgBB
+        if (req.imgbbImageUrl) {
+            // Delete old image from ImgBB
+            if (product.imageDeleteUrl) {
+                await deleteProductImageFromImgBB(product.imageDeleteUrl);
             }
+            updateData.imageUrl = req.imgbbImageUrl;
+            updateData.imageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Handle new image upload
-        if (req.file) {
-            // Delete old image if it exists and is not default
-            if (product.imageUrl && !product.imageUrl.includes('default-product.jpg')) {
-                deleteProductImage(product.imageUrl);
+        // ✅ Handle gallery images from ImgBB
+        if (req.imgbbGalleryUrls && req.imgbbGalleryUrls.length > 0) {
+            // Delete old gallery images from ImgBB
+            if (product.galleryDeleteUrls && product.galleryDeleteUrls.length > 0) {
+                for (const deleteUrl of product.galleryDeleteUrls) {
+                    await deleteProductImageFromImgBB(deleteUrl);
+                }
             }
-            updateData.imageUrl = `/uploads/products/${req.file.filename}`;
+
+            const existingGallery = updateData.galleryImages ?
+                parseJSONField(updateData.galleryImages, []) :
+                product.galleryImages || [];
+
+            updateData.galleryImages = [...existingGallery, ...req.imgbbGalleryUrls];
+            updateData.galleryDeleteUrls = req.imgbbGalleryDeleteUrls || [];
         }
 
-        // ✅ Parse JSON fields from FormData
+        // Parse JSON fields
         if (updateData.specs) {
             updateData.specs = parseJSONField(updateData.specs, []);
         }
@@ -461,9 +402,6 @@ exports.updateProduct = async (req, res) => {
         }
         if (updateData.technicalDetails) {
             updateData.technicalDetails = parseJSONField(updateData.technicalDetails, {});
-        }
-        if (updateData.galleryImages) {
-            updateData.galleryImages = parseJSONField(updateData.galleryImages, []);
         }
 
         // Update fields
@@ -496,10 +434,6 @@ exports.updateProduct = async (req, res) => {
         });
     } catch (error) {
         console.error('Update product error:', error);
-        // If there's an error and a file was uploaded, delete it
-        if (req.file) {
-            deleteProductImage(`/uploads/products/${req.file.filename}`);
-        }
         res.status(500).json({
             success: false,
             message: error.message,
@@ -508,7 +442,7 @@ exports.updateProduct = async (req, res) => {
 };
 
 // ============================================
-// DELETE - Delete product (and its accessories)
+// DELETE - Delete product
 // ============================================
 exports.deleteProduct = async (req, res) => {
     try {
@@ -526,25 +460,25 @@ exports.deleteProduct = async (req, res) => {
             });
         }
 
-        // ✅ Delete product image
-        if (product.imageUrl && !product.imageUrl.includes('default-product.jpg')) {
-            deleteProductImage(product.imageUrl);
+        // ✅ Delete main image from ImgBB
+        if (product.imageDeleteUrl) {
+            await deleteProductImageFromImgBB(product.imageDeleteUrl);
         }
 
-        // ✅ Delete gallery images
-        if (product.galleryImages && product.galleryImages.length > 0) {
-            deleteMultipleImages(product.galleryImages);
+        // ✅ Delete gallery images from ImgBB
+        if (product.galleryDeleteUrls && product.galleryDeleteUrls.length > 0) {
+            for (const deleteUrl of product.galleryDeleteUrls) {
+                await deleteProductImageFromImgBB(deleteUrl);
+            }
         }
 
-        // Delete all accessories belonging to this product
+        // Delete accessories
         await Accessory.deleteMany({ parentProductId: product.id });
 
-        // Update brand count
+        // Update counts
         if (product.brandId) {
             await Brand.findByIdAndUpdate(product.brandId, { $inc: { productCount: -1 } });
         }
-
-        // Update category count
         if (product.categoryId) {
             await Category.findByIdAndUpdate(product.categoryId, { $inc: { productCount: -1 } });
         }
@@ -553,7 +487,7 @@ exports.deleteProduct = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Product and its accessories deleted successfully',
+            message: 'Product and its images deleted successfully from ImgBB',
         });
     } catch (error) {
         console.error('Delete product error:', error);
@@ -621,17 +555,19 @@ exports.deleteMultipleProducts = async (req, res) => {
             ]
         });
 
-        // ✅ Delete all images for these products
+        // ✅ Delete all images from ImgBB
         for (const product of products) {
-            if (product.imageUrl && !product.imageUrl.includes('default-product.jpg')) {
-                deleteProductImage(product.imageUrl);
+            if (product.imageDeleteUrl) {
+                await deleteProductImageFromImgBB(product.imageDeleteUrl);
             }
-            if (product.galleryImages && product.galleryImages.length > 0) {
-                deleteMultipleImages(product.galleryImages);
+            if (product.galleryDeleteUrls && product.galleryDeleteUrls.length > 0) {
+                for (const deleteUrl of product.galleryDeleteUrls) {
+                    await deleteProductImageFromImgBB(deleteUrl);
+                }
             }
         }
 
-        // Delete all accessories for these products
+        // Delete accessories
         const productIds = products.map(p => p.id);
         await Accessory.deleteMany({ parentProductId: { $in: productIds } });
 
@@ -654,7 +590,7 @@ exports.deleteMultipleProducts = async (req, res) => {
 
         res.json({
             success: true,
-            message: `${result.deletedCount} products and their accessories deleted successfully`,
+            message: `${result.deletedCount} products and their images deleted successfully from ImgBB`,
             deletedCount: result.deletedCount,
         });
     } catch (error) {

@@ -1,4 +1,3 @@
-// src/routes/product.routes.js
 const express = require('express');
 const router = express.Router();
 const {
@@ -13,28 +12,28 @@ const {
 const { protect, admin } = require('../middleware/auth');
 const { 
     uploadProductImages, 
+    uploadToImgBBMiddleware,
     optimizeUploadedImages, 
     handleUploadErrors 
 } = require('../middleware/upload');
 
 // ============================================
-// ✅ PRODUCT ROUTES
+// PUBLIC ROUTES
 // ============================================
-
-// Get all products
 router.get('/', getProducts);
-
-// Get single product
 router.get('/:id', getProduct);
 
-// ✅ Admin routes with image upload
+// ============================================
+// ADMIN ROUTES (with ImgBB upload)
+// ============================================
 router.post(
     '/', 
     protect, 
     admin, 
-    uploadProductImages,  // Handle both image and galleryImages
-    optimizeUploadedImages, // Optimize images
-    handleUploadErrors,   // Handle upload errors
+    uploadProductImages,        // Handle files
+    optimizeUploadedImages,     // Optimize images
+    uploadToImgBBMiddleware,    // Upload to ImgBB
+    handleUploadErrors,         // Handle errors
     createProduct
 );
 
@@ -44,6 +43,7 @@ router.put(
     admin, 
     uploadProductImages,
     optimizeUploadedImages,
+    uploadToImgBBMiddleware,
     handleUploadErrors,
     updateProduct
 );
