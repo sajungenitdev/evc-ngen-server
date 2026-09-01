@@ -1,14 +1,31 @@
 // src/controllers/service.controller.js
 const Service = require('../models/Service');
+const mongoose = require('mongoose');
+const { deleteFromImgBB } = require('../services/imgbb.service');
 
 // ============================================
-// CREATE - Create a new service
+// HELPER: Delete image from ImgBB
 // ============================================
-// @desc    Create a new service
-// @route   POST /api/services
-// @access  Private/Admin
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
+
+// ============================================
+// CREATE - Create a new service with ImgBB
+// ============================================
 exports.createService = async (req, res) => {
     try {
+        console.log('📦 Creating service with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl
+        });
+
         const {
             title,
             badge,
@@ -48,6 +65,18 @@ exports.createService = async (req, res) => {
             });
         }
 
+        // ✅ Handle image from ImgBB
+        let mainImageUrl = imageUrl || '/images/services/default.jpg';
+        let mainImageDeleteUrl = null;
+        if (req.imgbbImageUrl) {
+            mainImageUrl = req.imgbbImageUrl;
+            mainImageDeleteUrl = req.imgbbDeleteUrl;
+        }
+
+        // Parse JSON fields if they come as strings
+        const parsedFeatures = typeof features === 'string' ? JSON.parse(features) : features || [];
+        const parsedProcess = typeof process === 'string' ? JSON.parse(process) : process || [];
+
         // Create service
         const service = await Service.create({
             id: title.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now(),
@@ -57,11 +86,12 @@ exports.createService = async (req, res) => {
             richDescription: richDescription || '',
             details: details || '',
             icon: icon || '📋',
-            imageUrl: imageUrl || '/images/services/default.jpg',
+            imageUrl: mainImageUrl,
+            imageDeleteUrl: mainImageDeleteUrl,
             link: link || `/services/${title.toLowerCase().replace(/\s+/g, '-')}`,
             color: color || 'bg-[#0c1f38]',
-            features: features || [],
-            process: process || [],
+            features: parsedFeatures,
+            process: parsedProcess,
             price: price || '',
             duration: duration || '',
             actionText: actionText || 'Request a Service',
@@ -71,7 +101,7 @@ exports.createService = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Service created successfully',
+            message: 'Service created successfully with ImgBB hosting',
             data: service,
         });
     } catch (error) {
@@ -86,9 +116,6 @@ exports.createService = async (req, res) => {
 // ============================================
 // READ - Get all services with filters
 // ============================================
-// @desc    Get all services with filters
-// @route   GET /api/services
-// @access  Public
 exports.getServices = async (req, res) => {
     try {
         const {
@@ -134,7 +161,6 @@ exports.getServices = async (req, res) => {
             custom: await Service.countDocuments({ category: 'custom' }),
         };
 
-        // Get color options for frontend
         const colorOptions = [
             { value: 'bg-[#0c1f38]', label: 'Dark Navy' },
             { value: 'bg-[#1f7a3d]', label: 'Green' },
@@ -174,15 +200,11 @@ exports.getServices = async (req, res) => {
 // ============================================
 // READ - Get services by category
 // ============================================
-// @desc    Get services by category
-// @route   GET /api/services/category/:category
-// @access  Public
 exports.getServicesByCategory = async (req, res) => {
     try {
         const { category } = req.params;
         const { limit = 20, page = 1 } = req.query;
 
-        // Validate category
         const validCategories = ['assessment', 'installation', 'maintenance', 'support', 'training', 'custom'];
         if (!validCategories.includes(category)) {
             return res.status(400).json({
@@ -221,30 +243,17 @@ exports.getServicesByCategory = async (req, res) => {
 // ============================================
 // READ - Get single service with related services
 // ============================================
-// @desc    Get single service with related services
-// @route   GET /api/services/:id
-// @access  Public
 exports.getService = async (req, res) => {
     try {
         const id = req.params.id;
-
-        // Decode URL-encoded ID
         const decodedId = decodeURIComponent(id);
 
-        // ✅ FIRST: Try to find by custom 'id' field
         let service = await Service.findOne({ id: decodedId });
-
-        // ✅ SECOND: If not found, try to find by MongoDB _id
-        if (!service) {
-            const mongoose = require('mongoose');
-            if (mongoose.Types.ObjectId.isValid(decodedId)) {
-                service = await Service.findById(decodedId);
-            }
+        if (!service && mongoose.Types.ObjectId.isValid(decodedId)) {
+            service = await Service.findById(decodedId);
         }
 
-        // ✅ THIRD: Try to find by title (fallback)
         if (!service) {
-            // Try to find by matching the slug part of the ID
             const slugPart = decodedId.split('-').slice(0, -1).join('-');
             if (slugPart) {
                 service = await Service.findOne({
@@ -260,8 +269,6 @@ exports.getService = async (req, res) => {
             });
         }
 
-        // ✅ FIX: Get related services by category (excluding current)
-        // Make sure we use the category field properly
         const relatedServices = await Service.find({
             _id: { $ne: service._id },
             category: service.category,
@@ -270,7 +277,6 @@ exports.getService = async (req, res) => {
             .limit(4)
             .select('id title description icon color link imageUrl');
 
-        // Get all categories
         const categories = [
             { id: 'all', label: 'All Services' },
             { id: 'assessment', label: 'Assessment' },
@@ -281,7 +287,6 @@ exports.getService = async (req, res) => {
             { id: 'custom', label: 'Custom' },
         ];
 
-        // Get category stats
         const stats = {
             total: await Service.countDocuments({}),
             assessment: await Service.countDocuments({ category: 'assessment' }),
@@ -311,14 +316,28 @@ exports.getService = async (req, res) => {
 };
 
 // ============================================
-// UPDATE - Update service
+// UPDATE - Update service with ImgBB
 // ============================================
-// @desc    Update service
-// @route   PUT /api/services/:id
-// @access  Private/Admin
 exports.updateService = async (req, res) => {
     try {
         const id = req.params.id;
+        console.log('📦 Updating service with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl
+        });
+
+        let service = await Service.findOne({ id: id });
+        if (!service && mongoose.Types.ObjectId.isValid(id)) {
+            service = await Service.findById(id);
+        }
+
+        if (!service) {
+            return res.status(404).json({
+                success: false,
+                message: 'Service not found',
+            });
+        }
+
         const {
             title,
             badge,
@@ -338,22 +357,16 @@ exports.updateService = async (req, res) => {
             category,
         } = req.body;
 
-        // ✅ FIRST: Try to find by custom 'id' field
-        let service = await Service.findOne({ id: id });
-
-        // ✅ SECOND: If not found, try to find by MongoDB _id
-        if (!service) {
-            const mongoose = require('mongoose');
-            if (mongoose.Types.ObjectId.isValid(id)) {
-                service = await Service.findById(id);
+        // ✅ Handle image from ImgBB
+        let mainImageUrl = imageUrl || service.imageUrl;
+        let mainImageDeleteUrl = service.imageDeleteUrl;
+        if (req.imgbbImageUrl) {
+            // Delete old image from ImgBB
+            if (service.imageDeleteUrl) {
+                await deleteImageFromImgBB(service.imageDeleteUrl);
             }
-        }
-
-        if (!service) {
-            return res.status(404).json({
-                success: false,
-                message: 'Service not found',
-            });
+            mainImageUrl = req.imgbbImageUrl;
+            mainImageDeleteUrl = req.imgbbDeleteUrl;
         }
 
         // Check if new title conflicts
@@ -370,6 +383,10 @@ exports.updateService = async (req, res) => {
             }
         }
 
+        // Parse JSON fields if they come as strings
+        const parsedFeatures = typeof features === 'string' ? JSON.parse(features) : features || service.features;
+        const parsedProcess = typeof process === 'string' ? JSON.parse(process) : process || service.process;
+
         // Update fields
         if (title) {
             service.title = title;
@@ -380,11 +397,12 @@ exports.updateService = async (req, res) => {
         if (richDescription !== undefined) service.richDescription = richDescription;
         if (details !== undefined) service.details = details;
         if (icon) service.icon = icon;
-        if (imageUrl) service.imageUrl = imageUrl;
+        service.imageUrl = mainImageUrl;
+        service.imageDeleteUrl = mainImageDeleteUrl;
         if (link) service.link = link;
         if (color) service.color = color;
-        if (features) service.features = features;
-        if (process !== undefined) service.process = process;
+        if (features !== undefined) service.features = parsedFeatures;
+        if (process !== undefined) service.process = parsedProcess;
         if (price !== undefined) service.price = price;
         if (duration !== undefined) service.duration = duration;
         if (actionText) service.actionText = actionText;
@@ -393,7 +411,6 @@ exports.updateService = async (req, res) => {
 
         await service.save();
 
-        // Get updated related services
         const relatedServices = await Service.find({
             _id: { $ne: service._id },
             category: service.category,
@@ -404,7 +421,7 @@ exports.updateService = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Service updated successfully',
+            message: 'Service updated successfully with ImgBB',
             data: {
                 ...service.toObject(),
                 related: relatedServices,
@@ -420,24 +437,15 @@ exports.updateService = async (req, res) => {
 };
 
 // ============================================
-// DELETE - Delete service
+// DELETE - Delete service with ImgBB cleanup
 // ============================================
-// @desc    Delete service
-// @route   DELETE /api/services/:id
-// @access  Private/Admin
 exports.deleteService = async (req, res) => {
     try {
         const id = req.params.id;
 
-        // ✅ FIRST: Try to find by custom 'id' field
         let service = await Service.findOne({ id: id });
-
-        // ✅ SECOND: If not found, try to find by MongoDB _id
-        if (!service) {
-            const mongoose = require('mongoose');
-            if (mongoose.Types.ObjectId.isValid(id)) {
-                service = await Service.findById(id);
-            }
+        if (!service && mongoose.Types.ObjectId.isValid(id)) {
+            service = await Service.findById(id);
         }
 
         if (!service) {
@@ -447,11 +455,16 @@ exports.deleteService = async (req, res) => {
             });
         }
 
+        // ✅ Delete image from ImgBB
+        if (service.imageDeleteUrl) {
+            await deleteImageFromImgBB(service.imageDeleteUrl);
+        }
+
         await service.deleteOne();
 
         res.json({
             success: true,
-            message: 'Service deleted successfully',
+            message: 'Service and its image deleted successfully from ImgBB',
         });
     } catch (error) {
         console.error('Delete service error:', error);
@@ -465,22 +478,13 @@ exports.deleteService = async (req, res) => {
 // ============================================
 // TOGGLE - Toggle service status
 // ============================================
-// @desc    Toggle service active status
-// @route   PUT /api/services/:id/toggle
-// @access  Private/Admin
 exports.toggleServiceStatus = async (req, res) => {
     try {
         const id = req.params.id;
 
-        // ✅ FIRST: Try to find by custom 'id' field
         let service = await Service.findOne({ id: id });
-
-        // ✅ SECOND: If not found, try to find by MongoDB _id
-        if (!service) {
-            const mongoose = require('mongoose');
-            if (mongoose.Types.ObjectId.isValid(id)) {
-                service = await Service.findById(id);
-            }
+        if (!service && mongoose.Types.ObjectId.isValid(id)) {
+            service = await Service.findById(id);
         }
 
         if (!service) {
@@ -510,9 +514,6 @@ exports.toggleServiceStatus = async (req, res) => {
 // ============================================
 // BULK - Delete multiple services
 // ============================================
-// @desc    Delete multiple services
-// @route   DELETE /api/services/bulk
-// @access  Private/Admin
 exports.deleteMultipleServices = async (req, res) => {
     try {
         const { ids } = req.body;
@@ -524,6 +525,21 @@ exports.deleteMultipleServices = async (req, res) => {
             });
         }
 
+        // ✅ Find all services first to delete their images
+        const services = await Service.find({
+            $or: [
+                { id: { $in: ids } },
+                { _id: { $in: ids } }
+            ]
+        });
+
+        // ✅ Delete all images from ImgBB
+        for (const service of services) {
+            if (service.imageDeleteUrl) {
+                await deleteImageFromImgBB(service.imageDeleteUrl);
+            }
+        }
+
         const result = await Service.deleteMany({
             $or: [
                 { id: { $in: ids } },
@@ -533,7 +549,7 @@ exports.deleteMultipleServices = async (req, res) => {
 
         res.json({
             success: true,
-            message: `${result.deletedCount} services deleted successfully`,
+            message: `${result.deletedCount} services and their images deleted successfully from ImgBB`,
             deletedCount: result.deletedCount,
         });
     } catch (error) {
@@ -548,9 +564,6 @@ exports.deleteMultipleServices = async (req, res) => {
 // ============================================
 // GET - Get service categories
 // ============================================
-// @desc    Get all service categories
-// @route   GET /api/services/categories
-// @access  Public
 exports.getServiceCategories = async (req, res) => {
     try {
         const categories = [
@@ -578,7 +591,6 @@ exports.getServiceCategories = async (req, res) => {
             { value: 'bg-[#dc2626]', label: 'Red' },
         ];
 
-        // Get category stats
         const stats = {
             total: await Service.countDocuments({}),
             assessment: await Service.countDocuments({ category: 'assessment' }),
