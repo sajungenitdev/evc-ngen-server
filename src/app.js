@@ -25,6 +25,12 @@ const statsRoutes = require('./routes/stats.routes');
 const foundationRoutes = require('./routes/foundation.routes');
 const aboutRoutes = require('./routes/about.routes');
 const solutionSectionRoutes = require('./routes/solutionSection.routes');
+const storiesRoutes = require('./routes/stories.routes');
+const helpSupportRoutes = require('./routes/helpSupport.routes');
+const evShopRoutes = require('./routes/evShop.routes');
+const endToEndSetupRoutes = require('./routes/endToEndSetup.routes');
+const faqRoutes = require('./routes/faq.routes');
+const termsRoutes = require('./routes/terms.routes');
 
 
 
@@ -149,6 +155,12 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/foundation', foundationRoutes);
 app.use('/api/about', aboutRoutes);
 app.use('/api/solutions-section', solutionSectionRoutes);
+app.use('/api/stories', storiesRoutes);
+app.use('/api/help-support', helpSupportRoutes);
+app.use('/api/ev-shop', evShopRoutes);
+app.use('/api/end-to-end-setup', endToEndSetupRoutes);
+app.use('/api/faq', faqRoutes);
+app.use('/api/terms', termsRoutes);
 
 
 // ============================================
