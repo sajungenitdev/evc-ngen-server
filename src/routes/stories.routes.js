@@ -25,7 +25,6 @@ const {
 // CONFIGURE MULTER FOR TEMPORARY UPLOAD
 // ============================================
 
-// Configure multer for temporary image upload (files deleted after ImgBB upload)
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = path.join(__dirname, '../../temp/uploads');
@@ -53,7 +52,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 5 * 1024 * 1024 // 5MB limit
+        fileSize: 5 * 1024 * 1024
     },
     fileFilter: fileFilter
 });
@@ -62,7 +61,6 @@ const upload = multer({
 // MIDDLEWARE FOR MULTIPLE CATEGORY IMAGES
 // ============================================
 
-// ✅ Handle multiple category image fields (category_0, category_1, etc.)
 const uploadCategoryImages = (req, res, next) => {
     const fields = Array.from({ length: 10 }, (_, i) => ({
         name: `category_${i}`,
@@ -81,8 +79,31 @@ const uploadCategoryImages = (req, res, next) => {
     });
 };
 
-// ✅ Handle main story image
+// ✅ Handle main story image (single file, field name 'mainImage')
 const uploadMainImage = upload.single('mainImage');
+
+// ✅ NEW: Middleware to convert single file upload to req.files format
+const uploadSingleImageToFiles = (req, res, next) => {
+    upload.single('image')(req, res, function (err) {
+        if (err) {
+            console.error('Upload error:', err);
+            return res.status(400).json({
+                success: false,
+                message: err.message || 'File upload failed'
+            });
+        }
+        
+        // ✅ Convert req.file to req.files format for ImgBB middleware compatibility
+        if (req.file) {
+            req.files = {
+                image: [req.file]
+            };
+            console.log('📸 Single image converted to req.files format:', req.file.originalname);
+        }
+        
+        next();
+    });
+};
 
 // ============================================
 // ROUTES
@@ -92,7 +113,7 @@ const uploadMainImage = upload.single('mainImage');
 router.get('/', getStories);
 router.get('/all', getAllStories);
 
-// Admin routes with ImgBB upload
+// Admin routes with ImgBB upload (for create/update with multiple images)
 router.post(
     '/',
     uploadCategoryImages,      // Handle category images
@@ -114,19 +135,19 @@ router.put(
 router.delete('/:id', deleteStories);
 router.put('/:id/toggle', toggleStoriesStatus);
 
-// Single image upload routes - Main story
+// ✅ FIXED: Single image upload routes - Main story
 router.post(
     '/:id/upload-main-image',
-    upload.single('image'),
+    uploadSingleImageToFiles,  // ✅ Uses converter middleware
     uploadToImgBBMiddleware,
     handleUploadErrors,
     uploadMainStoryImage
 );
 
-// Single image upload routes - Category
+// ✅ FIXED: Single image upload routes - Category
 router.post(
     '/:id/upload-category-image/:categoryIndex',
-    upload.single('image'),
+    uploadSingleImageToFiles,  // ✅ Uses converter middleware
     uploadToImgBBMiddleware,
     handleUploadErrors,
     uploadCategoryImage
