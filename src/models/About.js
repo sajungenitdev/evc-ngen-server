@@ -1,4 +1,4 @@
-// evngen-backend/src/models/About.js
+// src/models/About.js
 const mongoose = require('mongoose');
 
 const breadcrumbSchema = new mongoose.Schema({
@@ -59,6 +59,10 @@ const whoWeAreSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
+    },
     imageFile: {
         type: String,
         default: ''
@@ -83,6 +87,10 @@ const missionSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
+    },
     imageFile: {
         type: String,
         default: ''
@@ -98,6 +106,10 @@ const partnerSchema = new mongoose.Schema({
     logo: {
         type: String,
         default: ''
+    },
+    logoDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
     },
     logoFile: {
         type: String,
@@ -146,6 +158,10 @@ const aboutSchema = new mongoose.Schema({
         imageUrl: {
             type: String,
             default: '/images/help/EV Charging_1.jpg'
+        },
+        imageDeleteUrl: {  // ✅ ADD THIS
+            type: String,
+            default: null
         },
         imageFile: {
             type: String,

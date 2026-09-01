@@ -1,7 +1,19 @@
-// evngen-backend/src/controllers/aboutController.js
+// src/controllers/about.controller.js
 const About = require('../models/About');
-const path = require('path');
-const fs = require('fs');
+const { deleteFromImgBB } = require('../services/imgbb.service');
+
+// ============================================
+// HELPER: Delete image from ImgBB
+// ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
 
 // @desc    Get active about page
 // @route   GET /api/about
@@ -11,7 +23,6 @@ exports.getAbout = async (req, res) => {
         let about = await About.findOne({ isActive: true });
         
         if (!about) {
-            // Create default about page if none exists
             about = await About.create({
                 header: {
                     breadcrumbs: [
@@ -118,15 +129,52 @@ exports.getAllAbout = async (req, res) => {
 // @access  Public (for now)
 exports.createAbout = async (req, res) => {
     try {
-        // If setting as active, deactivate others
         if (req.body.isActive) {
             await About.updateMany(
                 { isActive: true },
                 { isActive: false }
             );
         }
+
+        const data = { ...req.body };
         
-        const about = await About.create(req.body);
+        // Handle header image
+        if (req.imgbbHeaderImageUrl) {
+            data.header = {
+                ...data.header,
+                imageUrl: req.imgbbHeaderImageUrl,
+                imageDeleteUrl: req.imgbbHeaderDeleteUrl
+            };
+        }
+        
+        // Handle who we are image
+        if (req.imgbbWhoWeAreImageUrl) {
+            data.whoWeAre = {
+                ...data.whoWeAre,
+                imageUrl: req.imgbbWhoWeAreImageUrl,
+                imageDeleteUrl: req.imgbbWhoWeAreDeleteUrl
+            };
+        }
+        
+        // Handle mission image
+        if (req.imgbbMissionImageUrl) {
+            data.mission = {
+                ...data.mission,
+                imageUrl: req.imgbbMissionImageUrl,
+                imageDeleteUrl: req.imgbbMissionDeleteUrl
+            };
+        }
+        
+        // Handle partner logos
+        if (data.partners && req.imgbbPartnerUrls && req.imgbbPartnerUrls.length > 0) {
+            data.partners = data.partners.map((partner, index) => ({
+                ...partner,
+                logo: req.imgbbPartnerUrls[index] || partner.logo || '',
+                logoDeleteUrl: req.imgbbPartnerDeleteUrls?.[index] || null
+            }));
+        }
+
+        const about = await About.create(data);
         res.status(201).json({
             success: true,
             data: about
@@ -155,17 +203,70 @@ exports.updateAbout = async (req, res) => {
             });
         }
         
-        // If setting as active, deactivate others
         if (req.body.isActive) {
             await About.updateMany(
                 { _id: { $ne: req.params.id }, isActive: true },
                 { isActive: false }
             );
         }
+
+        const data = { ...req.body };
         
+        // Handle header image
+        if (req.imgbbHeaderImageUrl) {
+            if (about.header && about.header.imageDeleteUrl) {
+                await deleteImageFromImgBB(about.header.imageDeleteUrl);
+            }
+            data.header = {
+                ...data.header,
+                imageUrl: req.imgbbHeaderImageUrl,
+                imageDeleteUrl: req.imgbbHeaderDeleteUrl
+            };
+        }
+        
+        // Handle who we are image
+        if (req.imgbbWhoWeAreImageUrl) {
+            if (about.whoWeAre && about.whoWeAre.imageDeleteUrl) {
+                await deleteImageFromImgBB(about.whoWeAre.imageDeleteUrl);
+            }
+            data.whoWeAre = {
+                ...data.whoWeAre,
+                imageUrl: req.imgbbWhoWeAreImageUrl,
+                imageDeleteUrl: req.imgbbWhoWeAreDeleteUrl
+            };
+        }
+        
+        // Handle mission image
+        if (req.imgbbMissionImageUrl) {
+            if (about.mission && about.mission.imageDeleteUrl) {
+                await deleteImageFromImgBB(about.mission.imageDeleteUrl);
+            }
+            data.mission = {
+                ...data.mission,
+                imageUrl: req.imgbbMissionImageUrl,
+                imageDeleteUrl: req.imgbbMissionDeleteUrl
+            };
+        }
+        
+        // Handle partner logos
+        if (data.partners && req.imgbbPartnerUrls && req.imgbbPartnerUrls.length > 0) {
+            // Delete old partner logos
+            for (let i = 0; i < Math.min(req.imgbbPartnerUrls.length, about.partners.length); i++) {
+                if (about.partners[i] && about.partners[i].logoDeleteUrl) {
+                    await deleteImageFromImgBB(about.partners[i].logoDeleteUrl);
+                }
+            }
+
+            data.partners = data.partners.map((partner, index) => ({
+                ...partner,
+                logo: req.imgbbPartnerUrls[index] || partner.logo || '',
+                logoDeleteUrl: req.imgbbPartnerDeleteUrls?.[index] || null
+            }));
+        }
+
         about = await About.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            data,
             { new: true, runValidators: true }
         );
         
@@ -195,6 +296,24 @@ exports.deleteAbout = async (req, res) => {
                 success: false,
                 message: 'About page not found'
             });
+        }
+        
+        // Delete all images from ImgBB
+        if (about.header && about.header.imageDeleteUrl) {
+            await deleteImageFromImgBB(about.header.imageDeleteUrl);
+        }
+        if (about.whoWeAre && about.whoWeAre.imageDeleteUrl) {
+            await deleteImageFromImgBB(about.whoWeAre.imageDeleteUrl);
+        }
+        if (about.mission && about.mission.imageDeleteUrl) {
+            await deleteImageFromImgBB(about.mission.imageDeleteUrl);
+        }
+        if (about.partners && about.partners.length > 0) {
+            for (const partner of about.partners) {
+                if (partner.logoDeleteUrl) {
+                    await deleteImageFromImgBB(partner.logoDeleteUrl);
+                }
+            }
         }
         
         await about.deleteOne();
@@ -229,7 +348,6 @@ exports.toggleAboutStatus = async (req, res) => {
         
         const newStatus = !about.isActive;
         
-        // If activating, deactivate others
         if (newStatus) {
             await About.updateMany(
                 { _id: { $ne: req.params.id }, isActive: true },
@@ -271,22 +389,25 @@ exports.uploadHeaderImage = async (req, res) => {
             });
         }
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
-        const imageUrl = `/uploads/about/${req.file.filename}`;
-        about.header.imageUrl = imageUrl;
-        about.header.imageFile = req.file.filename;
+        if (about.header && about.header.imageDeleteUrl) {
+            await deleteImageFromImgBB(about.header.imageDeleteUrl);
+        }
+
+        about.header.imageUrl = req.imgbbImageUrl;
+        about.header.imageDeleteUrl = req.imgbbDeleteUrl;
         await about.save();
 
         res.status(200).json({
             success: true,
             data: about,
-            message: 'Header image uploaded successfully'
+            message: 'Header image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading header image:', error);
@@ -311,22 +432,25 @@ exports.uploadWhoWeAreImage = async (req, res) => {
             });
         }
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
-        const imageUrl = `/uploads/about/${req.file.filename}`;
-        about.whoWeAre.imageUrl = imageUrl;
-        about.whoWeAre.imageFile = req.file.filename;
+        if (about.whoWeAre && about.whoWeAre.imageDeleteUrl) {
+            await deleteImageFromImgBB(about.whoWeAre.imageDeleteUrl);
+        }
+
+        about.whoWeAre.imageUrl = req.imgbbImageUrl;
+        about.whoWeAre.imageDeleteUrl = req.imgbbDeleteUrl;
         await about.save();
 
         res.status(200).json({
             success: true,
             data: about,
-            message: 'Who We Are image uploaded successfully'
+            message: 'Who We Are image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading who we are image:', error);
@@ -351,22 +475,25 @@ exports.uploadMissionImage = async (req, res) => {
             });
         }
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
-        const imageUrl = `/uploads/about/${req.file.filename}`;
-        about.mission.imageUrl = imageUrl;
-        about.mission.imageFile = req.file.filename;
+        if (about.mission && about.mission.imageDeleteUrl) {
+            await deleteImageFromImgBB(about.mission.imageDeleteUrl);
+        }
+
+        about.mission.imageUrl = req.imgbbImageUrl;
+        about.mission.imageDeleteUrl = req.imgbbDeleteUrl;
         await about.save();
 
         res.status(200).json({
             success: true,
             data: about,
-            message: 'Mission image uploaded successfully'
+            message: 'Mission image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading mission image:', error);
@@ -399,22 +526,25 @@ exports.uploadPartnerLogo = async (req, res) => {
             });
         }
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
-        const imageUrl = `/uploads/about/partners/${req.file.filename}`;
-        about.partners[partnerIndex].logo = imageUrl;
-        about.partners[partnerIndex].logoFile = req.file.filename;
+        if (about.partners[partnerIndex] && about.partners[partnerIndex].logoDeleteUrl) {
+            await deleteImageFromImgBB(about.partners[partnerIndex].logoDeleteUrl);
+        }
+
+        about.partners[partnerIndex].logo = req.imgbbImageUrl;
+        about.partners[partnerIndex].logoDeleteUrl = req.imgbbDeleteUrl;
         await about.save();
 
         res.status(200).json({
             success: true,
             data: about,
-            message: 'Partner logo uploaded successfully'
+            message: 'Partner logo uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading partner logo:', error);
