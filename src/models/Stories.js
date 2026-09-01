@@ -11,6 +11,10 @@ const categorySchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+     imageDeleteUrl: {  // ✅ ADD THIS - for ImgBB deletion
+        type: String,
+        default: null
+    },
     imageFile: {
         type: String,
         default: ''

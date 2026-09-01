@@ -1,4 +1,4 @@
-// evngen-backend/src/routes/stories.routes.js
+// src/routes/stories.routes.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -16,17 +16,19 @@ const {
     removeMainStoryImage,
     removeCategoryImage
 } = require('../controllers/storiesSection.controller');
+const { 
+    uploadToImgBBMiddleware,
+    handleUploadErrors 
+} = require('../middleware/upload');
 
-// Configure multer for image upload
+// ============================================
+// CONFIGURE MULTER FOR TEMPORARY UPLOAD
+// ============================================
+
+// Configure multer for temporary image upload (files deleted after ImgBB upload)
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        let uploadDir = path.join(__dirname, '../../uploads/stories');
-        
-        // If it's a category image, use categories subdirectory
-        if (req.originalUrl.includes('category')) {
-            uploadDir = path.join(uploadDir, 'categories');
-        }
-        
+        const uploadDir = path.join(__dirname, '../../temp/uploads');
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
         }
@@ -35,7 +37,7 @@ const storage = multer.diskStorage({
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const ext = path.extname(file.originalname);
-        cb(null, `stories-${uniqueSuffix}${ext}`);
+        cb(null, `temp-${uniqueSuffix}${ext}`);
     }
 });
 
@@ -56,39 +58,82 @@ const upload = multer({
     fileFilter: fileFilter
 });
 
+// ============================================
+// MIDDLEWARE FOR MULTIPLE CATEGORY IMAGES
+// ============================================
+
+// ✅ Handle multiple category image fields (category_0, category_1, etc.)
+const uploadCategoryImages = (req, res, next) => {
+    const fields = Array.from({ length: 10 }, (_, i) => ({
+        name: `category_${i}`,
+        maxCount: 1
+    }));
+    
+    upload.fields(fields)(req, res, function (err) {
+        if (err) {
+            console.error('Upload error:', err);
+            return res.status(400).json({
+                success: false,
+                message: err.message || 'File upload failed'
+            });
+        }
+        next();
+    });
+};
+
+// ✅ Handle main story image
+const uploadMainImage = upload.single('mainImage');
+
+// ============================================
+// ROUTES
+// ============================================
+
 // Public routes
 router.get('/', getStories);
 router.get('/all', getAllStories);
 
-// Admin routes
-router.post('/', createStories);
-router.put('/:id', updateStories);
+// Admin routes with ImgBB upload
+router.post(
+    '/',
+    uploadCategoryImages,      // Handle category images
+    uploadMainImage,           // Handle main story image
+    uploadToImgBBMiddleware,   // Upload to ImgBB
+    handleUploadErrors,        // Handle errors
+    createStories
+);
+
+router.put(
+    '/:id',
+    uploadCategoryImages,      // Handle category images
+    uploadMainImage,           // Handle main story image
+    uploadToImgBBMiddleware,   // Upload to ImgBB
+    handleUploadErrors,        // Handle errors
+    updateStories
+);
+
 router.delete('/:id', deleteStories);
 router.put('/:id/toggle', toggleStoriesStatus);
 
-// Image upload routes - Main story
+// Single image upload routes - Main story
 router.post(
     '/:id/upload-main-image',
     upload.single('image'),
+    uploadToImgBBMiddleware,
+    handleUploadErrors,
     uploadMainStoryImage
 );
 
-// Image upload routes - Category
+// Single image upload routes - Category
 router.post(
     '/:id/upload-category-image/:categoryIndex',
     upload.single('image'),
+    uploadToImgBBMiddleware,
+    handleUploadErrors,
     uploadCategoryImage
 );
 
 // Remove image routes
-router.delete(
-    '/:id/remove-main-image',
-    removeMainStoryImage
-);
-
-router.delete(
-    '/:id/remove-category-image/:categoryIndex',
-    removeCategoryImage
-);
+router.delete('/:id/remove-main-image', removeMainStoryImage);
+router.delete('/:id/remove-category-image/:categoryIndex', removeCategoryImage);
 
 module.exports = router;

@@ -1,5 +1,20 @@
-// evngen-backend/src/controllers/storiesController.js
+// src/controllers/storiesSection.controller.js
 const Stories = require('../models/Stories');
+const { deleteFromImgBB } = require('../services/imgbb.service');
+const fs = require('fs');
+
+// ============================================
+// HELPER: Delete image from ImgBB
+// ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
 
 // ============================================
 // GET ACTIVE STORIES SECTION
@@ -9,7 +24,6 @@ exports.getStories = async (req, res) => {
         let stories = await Stories.findOne({ isActive: true });
 
         if (!stories) {
-            // Create default stories section
             stories = await Stories.create({
                 heading: 'Discover Our Stories',
                 subtitle: 'Real deployments, real impact — a closer look at how our charging infrastructure performs in the field.',
@@ -96,6 +110,9 @@ exports.getAllStories = async (req, res) => {
 // ============================================
 exports.createStories = async (req, res) => {
     try {
+        console.log('📦 Creating stories with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', req.imgbbUrls);
+
         if (req.body.isActive) {
             await Stories.updateMany(
                 { isActive: true },
@@ -103,10 +120,50 @@ exports.createStories = async (req, res) => {
             );
         }
 
-        const stories = await Stories.create(req.body);
+        // Parse categories if they come as string
+        let categories = req.body.categories;
+        if (typeof categories === 'string') {
+            try {
+                categories = JSON.parse(categories);
+            } catch (e) {
+                categories = [];
+            }
+        }
+
+        // Process main story image
+        let mainStory = { ...req.body.mainStory };
+        if (typeof mainStory === 'string') {
+            try {
+                mainStory = JSON.parse(mainStory);
+            } catch (e) {
+                mainStory = {};
+            }
+        }
+        if (req.imgbbMainImageUrl) {
+            mainStory.imageUrl = req.imgbbMainImageUrl;
+            mainStory.imageDeleteUrl = req.imgbbMainDeleteUrl;
+        }
+
+        // Process category images
+        const processedCategories = categories.map((category, index) => {
+            const processed = { ...category };
+            if (req.imgbbUrls && req.imgbbUrls[index]) {
+                processed.imageUrl = req.imgbbUrls[index];
+                processed.imageDeleteUrl = req.imgbbDeleteUrls?.[index] || null;
+            }
+            return processed;
+        });
+
+        const stories = await Stories.create({
+            ...req.body,
+            mainStory,
+            categories: processedCategories
+        });
+
         res.status(201).json({
             success: true,
-            data: stories
+            data: stories,
+            message: 'Stories section created successfully with ImgBB hosting'
         });
     } catch (error) {
         console.error('Error creating stories:', error);
@@ -123,7 +180,11 @@ exports.createStories = async (req, res) => {
 // ============================================
 exports.updateStories = async (req, res) => {
     try {
-        let stories = await Stories.findById(req.params.id);
+        const { id } = req.params;
+        console.log('📦 Updating stories with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', req.imgbbUrls);
+
+        let stories = await Stories.findById(id);
 
         if (!stories) {
             return res.status(404).json({
@@ -134,28 +195,77 @@ exports.updateStories = async (req, res) => {
 
         if (req.body.isActive) {
             await Stories.updateMany(
-                { _id: { $ne: req.params.id }, isActive: true },
+                { _id: { $ne: id }, isActive: true },
                 { isActive: false }
             );
         }
 
-        // Remove _id from items before updating
-        if (req.body.categories) {
-            req.body.categories = req.body.categories.map(item => {
-                const { _id, ...cleanItem } = item;
-                return cleanItem;
-            });
+        // Parse categories if they come as string
+        let categories = req.body.categories;
+        if (typeof categories === 'string') {
+            try {
+                categories = JSON.parse(categories);
+            } catch (e) {
+                categories = stories.categories || [];
+            }
         }
 
+        // Process main story image
+        let mainStory = { ...req.body.mainStory };
+        if (typeof mainStory === 'string') {
+            try {
+                mainStory = JSON.parse(mainStory);
+            } catch (e) {
+                mainStory = stories.mainStory || {};
+            }
+        }
+
+        // Handle main story image from ImgBB
+        if (req.imgbbMainImageUrl) {
+            // Delete old main image from ImgBB
+            if (stories.mainStory && stories.mainStory.imageDeleteUrl) {
+                await deleteImageFromImgBB(stories.mainStory.imageDeleteUrl);
+            }
+            mainStory.imageUrl = req.imgbbMainImageUrl;
+            mainStory.imageDeleteUrl = req.imgbbMainDeleteUrl;
+        }
+
+        // Process category images
+        const processedCategories = categories.map((category, index) => {
+            const processed = { ...category };
+            
+            // Handle new ImgBB URLs for categories
+            if (req.imgbbUrls && req.imgbbUrls[index]) {
+                // Delete old category image from ImgBB if it exists
+                if (stories.categories && stories.categories[index] && 
+                    stories.categories[index].imageDeleteUrl) {
+                    deleteImageFromImgBB(stories.categories[index].imageDeleteUrl);
+                }
+                processed.imageUrl = req.imgbbUrls[index];
+                processed.imageDeleteUrl = req.imgbbDeleteUrls?.[index] || null;
+            }
+            
+            // Remove _id from items before updating
+            const { _id, ...cleanItem } = processed;
+            return cleanItem;
+        });
+
+        const updateData = {
+            ...req.body,
+            mainStory,
+            categories: processedCategories
+        };
+
         stories = await Stories.findByIdAndUpdate(
-            req.params.id,
-            req.body,
+            id,
+            updateData,
             { new: true, runValidators: true }
         );
 
         res.status(200).json({
             success: true,
-            data: stories
+            data: stories,
+            message: 'Stories section updated successfully with ImgBB'
         });
     } catch (error) {
         console.error('Error updating stories:', error);
@@ -181,11 +291,25 @@ exports.deleteStories = async (req, res) => {
             });
         }
 
+        // ✅ Delete main story image from ImgBB
+        if (stories.mainStory && stories.mainStory.imageDeleteUrl) {
+            await deleteImageFromImgBB(stories.mainStory.imageDeleteUrl);
+        }
+
+        // ✅ Delete category images from ImgBB
+        if (stories.categories && stories.categories.length > 0) {
+            for (const category of stories.categories) {
+                if (category.imageDeleteUrl) {
+                    await deleteImageFromImgBB(category.imageDeleteUrl);
+                }
+            }
+        }
+
         await stories.deleteOne();
 
         res.status(200).json({
             success: true,
-            message: 'Stories section deleted successfully'
+            message: 'Stories section and its images deleted successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error deleting stories:', error);
@@ -225,7 +349,8 @@ exports.toggleStoriesStatus = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            data: stories
+            data: stories,
+            message: `Stories section ${newStatus ? 'activated' : 'deactivated'} successfully`
         });
     } catch (error) {
         console.error('Error toggling stories status:', error);
@@ -260,15 +385,41 @@ exports.uploadMainStoryImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/stories/${req.file.filename}`;
-        stories.mainStory.imageUrl = imageUrl;
-        stories.mainStory.imageFile = req.file.filename;
+        // ✅ Upload to ImgBB
+        const { uploadToImgBB } = require('../services/imgbb.service');
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64Image = fileBuffer.toString('base64');
+
+        const result = await uploadToImgBB(
+            base64Image,
+            `stories-main-${Date.now()}`
+        );
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Failed to upload image to ImgBB: ' + result.error
+            });
+        }
+
+        // Delete old image from ImgBB if exists
+        if (stories.mainStory && stories.mainStory.imageDeleteUrl) {
+            await deleteImageFromImgBB(stories.mainStory.imageDeleteUrl);
+        }
+
+        stories.mainStory.imageUrl = result.url;
+        stories.mainStory.imageDeleteUrl = result.deleteUrl;
         await stories.save();
+
+        // Clean up temp file
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
 
         res.status(200).json({
             success: true,
             data: stories,
-            message: 'Main story image uploaded successfully'
+            message: 'Main story image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading main story image:', error);
@@ -311,15 +462,41 @@ exports.uploadCategoryImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/stories/categories/${req.file.filename}`;
-        stories.categories[index].imageUrl = imageUrl;
-        stories.categories[index].imageFile = req.file.filename;
+        // ✅ Upload to ImgBB
+        const { uploadToImgBB } = require('../services/imgbb.service');
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64Image = fileBuffer.toString('base64');
+
+        const result = await uploadToImgBB(
+            base64Image,
+            `stories-category-${Date.now()}-${index}`
+        );
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Failed to upload image to ImgBB: ' + result.error
+            });
+        }
+
+        // Delete old category image from ImgBB if exists
+        if (stories.categories[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(stories.categories[index].imageDeleteUrl);
+        }
+
+        stories.categories[index].imageUrl = result.url;
+        stories.categories[index].imageDeleteUrl = result.deleteUrl;
         await stories.save();
+
+        // Clean up temp file
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
 
         res.status(200).json({
             success: true,
             data: stories,
-            message: 'Category image uploaded successfully'
+            message: 'Category image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading category image:', error);
@@ -347,14 +524,19 @@ exports.removeMainStoryImage = async (req, res) => {
             });
         }
 
+        // ✅ Delete image from ImgBB
+        if (stories.mainStory && stories.mainStory.imageDeleteUrl) {
+            await deleteImageFromImgBB(stories.mainStory.imageDeleteUrl);
+        }
+
         stories.mainStory.imageUrl = '';
-        stories.mainStory.imageFile = '';
+        stories.mainStory.imageDeleteUrl = null;
         await stories.save();
 
         res.status(200).json({
             success: true,
             data: stories,
-            message: 'Main story image removed successfully'
+            message: 'Main story image removed successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error removing main story image:', error);
@@ -390,14 +572,19 @@ exports.removeCategoryImage = async (req, res) => {
             });
         }
 
+        // ✅ Delete image from ImgBB
+        if (stories.categories[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(stories.categories[index].imageDeleteUrl);
+        }
+
         stories.categories[index].imageUrl = '';
-        stories.categories[index].imageFile = '';
+        stories.categories[index].imageDeleteUrl = null;
         await stories.save();
 
         res.status(200).json({
             success: true,
             data: stories,
-            message: 'Category image removed successfully'
+            message: 'Category image removed successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error removing category image:', error);
