@@ -215,7 +215,9 @@ exports.updateTraining = async (req, res) => {
     try {
         const id = req.params.id;
         console.log('📦 Updating training with body:', req.body);
-        console.log('📸 Files uploaded:', req.files);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl
+        });
 
         let training = await Training.findOne({ id: id });
         if (!training && mongoose.Types.ObjectId.isValid(id)) {
@@ -231,7 +233,7 @@ exports.updateTraining = async (req, res) => {
 
         const {
             title,
-            categoryId, // ✅ ADD THIS
+            categoryId,
             badge,
             description,
             details,
@@ -252,22 +254,29 @@ exports.updateTraining = async (req, res) => {
         const parsedFeatures = parseJSONField(features, training.features || []);
         const parsedPrerequisites = parseJSONField(prerequisites, training.prerequisites || []);
 
-        // ✅ Handle image upload
+        // ✅ Handle image from ImgBB (NOT local path)
         let mainImageUrl = training.imageUrl;
-        if (req.files && req.files['image'] && req.files['image'].length > 0) {
-            mainImageUrl = `/uploads/products/${req.files['image'][0].filename}`;
+        let mainImageDeleteUrl = training.imageDeleteUrl;
+        if (req.imgbbImageUrl) {
+            // Delete old image from ImgBB
+            if (training.imageDeleteUrl) {
+                await deleteImageFromImgBB(training.imageDeleteUrl);
+            }
+            mainImageUrl = req.imgbbImageUrl;
+            mainImageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Update training - ADD categoryId
+        // ✅ Update training
         const updatedData = {
             title: title || training.title,
-            categoryId: categoryId !== undefined ? categoryId : training.categoryId, // ✅ ADD THIS
+            categoryId: categoryId !== undefined ? categoryId : training.categoryId,
             badge: badge !== undefined ? badge : training.badge,
             description: description !== undefined ? description : training.description,
             details: details !== undefined ? details : training.details,
             duration: duration !== undefined ? duration : training.duration,
             format: format !== undefined ? format : training.format,
             imageUrl: mainImageUrl,
+            imageDeleteUrl: mainImageDeleteUrl,  // ✅ Save delete URL
             link: link || training.link,
             color: color || training.color,
             icon: icon || training.icon,
@@ -290,7 +299,7 @@ exports.updateTraining = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Training program updated successfully',
+            message: 'Training program updated successfully with ImgBB',
             data: training
         });
     } catch (error) {
