@@ -12,7 +12,8 @@ const {
 } = require('../controllers/industry.controller');
 const { protect, admin } = require('../middleware/auth');
 const {
-    uploadIndustryImages, // ✅ Changed from uploadSolutionImages
+    uploadIndustryImages,
+    uploadToImgBBMiddleware,  // ✅ Add ImgBB upload
     optimizeUploadedImages,
     handleUploadErrors
 } = require('../middleware/upload');
@@ -25,14 +26,15 @@ const {
 router.get('/', getIndustries);
 router.get('/:id', getIndustry);
 
-// Admin only routes with image upload
+// Admin only routes with ImgBB upload
 router.post(
     '/',
     protect,
     admin,
-    uploadIndustryImages, // ✅ Changed from uploadSolutionImages
-    optimizeUploadedImages,
-    handleUploadErrors,
+    uploadIndustryImages,        // 1. Handle files (image, caseStudyImage)
+    optimizeUploadedImages,     // 2. Optimize images
+    uploadToImgBBMiddleware,    // 3. Upload to ImgBB
+    handleUploadErrors,         // 4. Handle errors
     createIndustry
 );
 
@@ -40,9 +42,10 @@ router.put(
     '/:id',
     protect,
     admin,
-    uploadIndustryImages, // ✅ Changed from uploadSolutionImages
-    optimizeUploadedImages,
-    handleUploadErrors,
+    uploadIndustryImages,        // 1. Handle files (image, caseStudyImage)
+    optimizeUploadedImages,     // 2. Optimize images
+    uploadToImgBBMiddleware,    // 3. Upload to ImgBB
+    handleUploadErrors,         // 4. Handle errors
     updateIndustry
 );
 

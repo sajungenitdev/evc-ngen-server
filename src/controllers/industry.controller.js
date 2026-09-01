@@ -1,6 +1,7 @@
 // src/controllers/industry.controller.js
 const Industry = require('../models/Industry');
 const mongoose = require('mongoose');
+const { deleteFromImgBB } = require('../services/imgbb.service');
 
 // ============================================
 // HELPER: Parse JSON fields
@@ -22,13 +23,28 @@ const parseJSONField = (field, defaultValue = null) => {
 };
 
 // ============================================
-// CREATE - Create a new industry
+// HELPER: Delete image from ImgBB
 // ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
 
+// ============================================
+// CREATE - Create a new industry with ImgBB
+// ============================================
 exports.createIndustry = async (req, res) => {
     try {
         console.log('📦 Creating industry with body:', req.body);
-        console.log('📸 Files uploaded:', req.files);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl,
+            caseStudyImage: req.imgbbCaseStudyImage
+        });
 
         const {
             label,
@@ -92,24 +108,29 @@ exports.createIndustry = async (req, res) => {
         const parsedFeatures = parseJSONField(features, []);
         const parsedCaseStudy = parseJSONField(caseStudy, { title: '', description: '', imageUrl: '', link: '' });
 
-        // ✅ Handle main image upload - FIXED: removed undefined imageUrl
+        // ✅ Handle main image from ImgBB
         let mainImageUrl = '/images/industries/default.jpg';
-        if (req.files && req.files['image'] && req.files['image'].length > 0) {
-            mainImageUrl = `/uploads/products/${req.files['image'][0].filename}`;
+        let mainImageDeleteUrl = null;
+        if (req.imgbbImageUrl) {
+            mainImageUrl = req.imgbbImageUrl;
+            mainImageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Handle case study image
+        // ✅ Handle case study image from ImgBB
         let caseStudyImageUrl = parsedCaseStudy.imageUrl || '';
-        if (req.files && req.files['caseStudyImage'] && req.files['caseStudyImage'].length > 0) {
-            caseStudyImageUrl = `/uploads/products/${req.files['caseStudyImage'][0].filename}`;
+        let caseStudyImageDeleteUrl = null;
+        if (req.imgbbCaseStudyImage) {
+            caseStudyImageUrl = req.imgbbCaseStudyImage;
+            caseStudyImageDeleteUrl = req.imgbbCaseStudyDeleteUrl;
         }
 
         const updatedCaseStudy = {
             ...parsedCaseStudy,
-            imageUrl: caseStudyImageUrl
+            imageUrl: caseStudyImageUrl,
+            imageDeleteUrl: caseStudyImageDeleteUrl
         };
 
-        // ✅ Create industry
+        // ✅ Create industry with ImgBB URLs
         const industry = await Industry.create({
             id: id,
             label: label.trim(),
@@ -117,6 +138,7 @@ exports.createIndustry = async (req, res) => {
             desc: desc || '',
             icon: icon || '🏢',
             imageUrl: mainImageUrl,
+            imageDeleteUrl: mainImageDeleteUrl,
             title: title.trim(),
             subtitle: subtitle || '',
             overview: overview,
@@ -130,7 +152,7 @@ exports.createIndustry = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Industry created successfully',
+            message: 'Industry created successfully with ImgBB hosting',
             data: industry
         });
     } catch (error) {
@@ -202,7 +224,6 @@ exports.getIndustry = async (req, res) => {
     try {
         const id = req.params.id;
 
-        // Try to find by id, slug, or _id
         let industry = await Industry.findOne({ id: id });
         if (!industry) {
             industry = await Industry.findOne({ slug: id });
@@ -232,13 +253,16 @@ exports.getIndustry = async (req, res) => {
 };
 
 // ============================================
-// UPDATE - Update industry
+// UPDATE - Update industry with ImgBB
 // ============================================
 exports.updateIndustry = async (req, res) => {
     try {
         const id = req.params.id;
         console.log('📦 Updating industry with body:', req.body);
-        console.log('📸 Files uploaded:', req.files);
+        console.log('🖼️ ImgBB URLs:', {
+            imageUrl: req.imgbbImageUrl,
+            caseStudyImage: req.imgbbCaseStudyImage
+        });
 
         let industry = await Industry.findOne({ id: id });
         if (!industry) {
@@ -277,21 +301,34 @@ exports.updateIndustry = async (req, res) => {
         const parsedFeatures = parseJSONField(features, industry.features || []);
         const parsedCaseStudy = parseJSONField(caseStudy, industry.caseStudy || { title: '', description: '', imageUrl: '', link: '' });
 
-        // ✅ Handle main image upload
+        // ✅ Handle main image from ImgBB
         let mainImageUrl = industry.imageUrl;
-        if (req.files && req.files['image'] && req.files['image'].length > 0) {
-            mainImageUrl = `/uploads/products/${req.files['image'][0].filename}`;
+        let mainImageDeleteUrl = industry.imageDeleteUrl;
+        if (req.imgbbImageUrl) {
+            // Delete old image from ImgBB
+            if (industry.imageDeleteUrl) {
+                await deleteImageFromImgBB(industry.imageDeleteUrl);
+            }
+            mainImageUrl = req.imgbbImageUrl;
+            mainImageDeleteUrl = req.imgbbDeleteUrl;
         }
 
-        // ✅ Handle case study image
+        // ✅ Handle case study image from ImgBB
         let caseStudyImageUrl = parsedCaseStudy.imageUrl || industry.caseStudy?.imageUrl || '';
-        if (req.files && req.files['caseStudyImage'] && req.files['caseStudyImage'].length > 0) {
-            caseStudyImageUrl = `/uploads/products/${req.files['caseStudyImage'][0].filename}`;
+        let caseStudyImageDeleteUrl = parsedCaseStudy.imageDeleteUrl || industry.caseStudy?.imageDeleteUrl || null;
+        if (req.imgbbCaseStudyImage) {
+            // Delete old case study image from ImgBB
+            if (industry.caseStudy?.imageDeleteUrl) {
+                await deleteImageFromImgBB(industry.caseStudy.imageDeleteUrl);
+            }
+            caseStudyImageUrl = req.imgbbCaseStudyImage;
+            caseStudyImageDeleteUrl = req.imgbbCaseStudyDeleteUrl;
         }
 
         const updatedCaseStudy = {
             ...parsedCaseStudy,
-            imageUrl: caseStudyImageUrl
+            imageUrl: caseStudyImageUrl,
+            imageDeleteUrl: caseStudyImageDeleteUrl
         };
 
         // ✅ Update industry
@@ -301,6 +338,7 @@ exports.updateIndustry = async (req, res) => {
             desc: desc || industry.desc || '',
             icon: icon || industry.icon || '🏢',
             imageUrl: mainImageUrl,
+            imageDeleteUrl: mainImageDeleteUrl,
             title: title || industry.title,
             subtitle: subtitle || industry.subtitle || '',
             overview: overview || industry.overview,
@@ -322,7 +360,7 @@ exports.updateIndustry = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Industry updated successfully',
+            message: 'Industry updated successfully with ImgBB',
             data: industry
         });
     } catch (error) {
@@ -336,7 +374,7 @@ exports.updateIndustry = async (req, res) => {
 };
 
 // ============================================
-// DELETE - Delete industry
+// DELETE - Delete industry with ImgBB cleanup
 // ============================================
 exports.deleteIndustry = async (req, res) => {
     try {
@@ -357,11 +395,21 @@ exports.deleteIndustry = async (req, res) => {
             });
         }
 
+        // ✅ Delete main image from ImgBB
+        if (industry.imageDeleteUrl) {
+            await deleteImageFromImgBB(industry.imageDeleteUrl);
+        }
+
+        // ✅ Delete case study image from ImgBB
+        if (industry.caseStudy && industry.caseStudy.imageDeleteUrl) {
+            await deleteImageFromImgBB(industry.caseStudy.imageDeleteUrl);
+        }
+
         await industry.deleteOne();
 
         res.json({
             success: true,
-            message: 'Industry deleted successfully'
+            message: 'Industry and its images deleted successfully from ImgBB'
         });
     } catch (error) {
         console.error('Delete industry error:', error);
@@ -425,6 +473,25 @@ exports.deleteMultipleIndustries = async (req, res) => {
             });
         }
 
+        // ✅ Find all industries first to delete their images
+        const industries = await Industry.find({
+            $or: [
+                { id: { $in: ids } },
+                { slug: { $in: ids } },
+                { _id: { $in: ids } }
+            ]
+        });
+
+        // ✅ Delete all images from ImgBB
+        for (const industry of industries) {
+            if (industry.imageDeleteUrl) {
+                await deleteImageFromImgBB(industry.imageDeleteUrl);
+            }
+            if (industry.caseStudy && industry.caseStudy.imageDeleteUrl) {
+                await deleteImageFromImgBB(industry.caseStudy.imageDeleteUrl);
+            }
+        }
+
         const result = await Industry.deleteMany({
             $or: [
                 { id: { $in: ids } },
@@ -435,7 +502,7 @@ exports.deleteMultipleIndustries = async (req, res) => {
 
         res.json({
             success: true,
-            message: `${result.deletedCount} industries deleted successfully`,
+            message: `${result.deletedCount} industries and their images deleted successfully from ImgBB`,
             deletedCount: result.deletedCount
         });
     } catch (error) {

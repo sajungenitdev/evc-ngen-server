@@ -70,8 +70,11 @@ const IndustrySchema = new mongoose.Schema(
             default: []
         },
         caseStudy: {
-            type: CaseStudySchema,
-            default: { title: '', description: '', imageUrl: '', link: '' }
+            title: { type: String, default: '' },
+            description: { type: String, default: '' },
+            imageUrl: { type: String, default: '' },
+            imageDeleteUrl: { type: String, default: null },  // ✅ Add this
+            link: { type: String, default: '' }
         },
         features: {
             type: [String],
