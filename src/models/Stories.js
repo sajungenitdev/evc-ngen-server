@@ -1,4 +1,4 @@
-// evngen-backend/src/models/Stories.js
+// src/models/Stories.js
 const mongoose = require('mongoose');
 
 const categorySchema = new mongoose.Schema({
@@ -11,7 +11,7 @@ const categorySchema = new mongoose.Schema({
         type: String,
         default: ''
     },
-     imageDeleteUrl: {  // ✅ ADD THIS - for ImgBB deletion
+    imageDeleteUrl: {
         type: String,
         default: null
     },
@@ -49,6 +49,10 @@ const mainStorySchema = new mongoose.Schema({
     imageUrl: {
         type: String,
         default: ''
+    },
+    imageDeleteUrl: {
+        type: String,
+        default: null
     },
     imageFile: {
         type: String,

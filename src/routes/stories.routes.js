@@ -58,14 +58,18 @@ const upload = multer({
 });
 
 // ============================================
-// MIDDLEWARE FOR MULTIPLE CATEGORY IMAGES
+// ✅ FIXED: MIDDLEWARE FOR STORY IMAGES
 // ============================================
 
-const uploadCategoryImages = (req, res, next) => {
-    const fields = Array.from({ length: 10 }, (_, i) => ({
-        name: `category_${i}`,
-        maxCount: 1
-    }));
+// ✅ Convert category_0, category_1 to galleryImages format for ImgBB middleware
+const uploadStoryImages = (req, res, next) => {
+    const fields = [
+        { name: 'mainImage', maxCount: 1 },
+        ...Array.from({ length: 10 }, (_, i) => ({
+            name: `category_${i}`,
+            maxCount: 1
+        }))
+    ];
     
     upload.fields(fields)(req, res, function (err) {
         if (err) {
@@ -75,14 +79,38 @@ const uploadCategoryImages = (req, res, next) => {
                 message: err.message || 'File upload failed'
             });
         }
+        
+        // ✅ Convert to format ImgBB middleware expects
+        if (req.files) {
+            const newFiles = {};
+            
+            // Handle main image
+            if (req.files.mainImage && req.files.mainImage.length > 0) {
+                newFiles.image = req.files.mainImage;
+                console.log('📸 Main image found:', req.files.mainImage[0].originalname);
+            }
+            
+            // Handle category images
+            const categoryImages = [];
+            for (const [key, files] of Object.entries(req.files)) {
+                if (key.startsWith('category_')) {
+                    categoryImages.push(...files);
+                }
+            }
+            
+            if (categoryImages.length > 0) {
+                newFiles.galleryImages = categoryImages;
+                console.log(`📸 ${categoryImages.length} category images found`);
+            }
+            
+            req.files = newFiles;
+        }
+        
         next();
     });
 };
 
-// ✅ Handle main story image (single file, field name 'mainImage')
-const uploadMainImage = upload.single('mainImage');
-
-// ✅ NEW: Middleware to convert single file upload to req.files format
+// Convert single file upload to req.files format (for single image uploads)
 const uploadSingleImageToFiles = (req, res, next) => {
     upload.single('image')(req, res, function (err) {
         if (err) {
@@ -93,12 +121,11 @@ const uploadSingleImageToFiles = (req, res, next) => {
             });
         }
         
-        // ✅ Convert req.file to req.files format for ImgBB middleware compatibility
         if (req.file) {
             req.files = {
                 image: [req.file]
             };
-            console.log('📸 Single image converted to req.files format:', req.file.originalname);
+            console.log('📸 Single image converted:', req.file.originalname);
         }
         
         next();
@@ -113,41 +140,38 @@ const uploadSingleImageToFiles = (req, res, next) => {
 router.get('/', getStories);
 router.get('/all', getAllStories);
 
-// Admin routes with ImgBB upload (for create/update with multiple images)
+// ✅ FIXED: Admin routes with ImgBB upload
 router.post(
     '/',
-    uploadCategoryImages,      // Handle category images
-    uploadMainImage,           // Handle main story image
-    uploadToImgBBMiddleware,   // Upload to ImgBB
-    handleUploadErrors,        // Handle errors
+    uploadStoryImages,          // ✅ Handles mainImage + category_0, category_1...
+    uploadToImgBBMiddleware,    // Upload to ImgBB
+    handleUploadErrors,
     createStories
 );
 
 router.put(
     '/:id',
-    uploadCategoryImages,      // Handle category images
-    uploadMainImage,           // Handle main story image
-    uploadToImgBBMiddleware,   // Upload to ImgBB
-    handleUploadErrors,        // Handle errors
+    uploadStoryImages,          // ✅ Handles mainImage + category_0, category_1...
+    uploadToImgBBMiddleware,    // Upload to ImgBB
+    handleUploadErrors,
     updateStories
 );
 
 router.delete('/:id', deleteStories);
 router.put('/:id/toggle', toggleStoriesStatus);
 
-// ✅ FIXED: Single image upload routes - Main story
+// Single image upload routes
 router.post(
     '/:id/upload-main-image',
-    uploadSingleImageToFiles,  // ✅ Uses converter middleware
+    uploadSingleImageToFiles,
     uploadToImgBBMiddleware,
     handleUploadErrors,
     uploadMainStoryImage
 );
 
-// ✅ FIXED: Single image upload routes - Category
 router.post(
     '/:id/upload-category-image/:categoryIndex',
-    uploadSingleImageToFiles,  // ✅ Uses converter middleware
+    uploadSingleImageToFiles,
     uploadToImgBBMiddleware,
     handleUploadErrors,
     uploadCategoryImage
