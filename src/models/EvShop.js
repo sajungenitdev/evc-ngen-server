@@ -1,4 +1,4 @@
-// evngen-backend/src/models/EvShop.js
+// src/models/EvShop.js
 const mongoose = require('mongoose');
 
 const shopItemSchema = new mongoose.Schema({
@@ -23,6 +23,10 @@ const shopItemSchema = new mongoose.Schema({
     imageUrl: {
         type: String,
         default: ''
+    },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
     },
     imageFile: {
         type: String,

@@ -1,5 +1,19 @@
-// evngen-backend/src/controllers/evShopController.js
+// src/controllers/evShop.controller.js
 const EvShop = require('../models/EvShop');
+const { deleteFromImgBB } = require('../services/imgbb.service');
+
+// ============================================
+// HELPER: Delete image from ImgBB
+// ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
 
 // ============================================
 // GET ACTIVE EV SHOP SECTION
@@ -9,7 +23,6 @@ exports.getEvShop = async (req, res) => {
         let evShop = await EvShop.findOne({ isActive: true });
 
         if (!evShop) {
-            // Create default EV Shop section
             evShop = await EvShop.create({
                 heading: 'EV Shop Online',
                 items: [
@@ -100,7 +113,18 @@ exports.createEvShop = async (req, res) => {
             );
         }
 
-        const evShop = await EvShop.create(req.body);
+        const data = { ...req.body };
+
+        // Process items with ImgBB URLs
+        if (data.items && req.imgbbUrls && req.imgbbUrls.length > 0) {
+            data.items = data.items.map((item, index) => ({
+                ...item,
+                imageUrl: req.imgbbUrls[index] || item.imageUrl || '',
+                imageDeleteUrl: req.imgbbDeleteUrls?.[index] || null
+            }));
+        }
+
+        const evShop = await EvShop.create(data);
         res.status(201).json({
             success: true,
             data: evShop
@@ -136,17 +160,30 @@ exports.updateEvShop = async (req, res) => {
             );
         }
 
-        // Remove _id from items before updating
-        if (req.body.items) {
-            req.body.items = req.body.items.map(item => {
+        const data = { ...req.body };
+
+        // Process items with ImgBB URLs
+        if (data.items && req.imgbbUrls && req.imgbbUrls.length > 0) {
+            // Delete old images
+            for (let i = 0; i < Math.min(req.imgbbUrls.length, evShop.items.length); i++) {
+                if (evShop.items[i] && evShop.items[i].imageDeleteUrl) {
+                    await deleteImageFromImgBB(evShop.items[i].imageDeleteUrl);
+                }
+            }
+
+            data.items = data.items.map((item, index) => {
                 const { _id, ...cleanItem } = item;
-                return cleanItem;
+                return {
+                    ...cleanItem,
+                    imageUrl: req.imgbbUrls[index] || item.imageUrl || '',
+                    imageDeleteUrl: req.imgbbDeleteUrls?.[index] || null
+                };
             });
         }
 
         evShop = await EvShop.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            data,
             { new: true, runValidators: true }
         );
 
@@ -176,6 +213,15 @@ exports.deleteEvShop = async (req, res) => {
                 success: false,
                 message: 'EV Shop section not found'
             });
+        }
+
+        // Delete all item images from ImgBB
+        if (evShop.items && evShop.items.length > 0) {
+            for (const item of evShop.items) {
+                if (item.imageDeleteUrl) {
+                    await deleteImageFromImgBB(item.imageDeleteUrl);
+                }
+            }
         }
 
         await evShop.deleteOne();
@@ -241,15 +287,14 @@ exports.uploadShopItemImage = async (req, res) => {
     try {
         const { id, itemIndex } = req.params;
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
         const evShop = await EvShop.findById(id);
-
         if (!evShop) {
             return res.status(404).json({
                 success: false,
@@ -265,15 +310,18 @@ exports.uploadShopItemImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/ev-shop/${req.file.filename}`;
-        evShop.items[index].imageUrl = imageUrl;
-        evShop.items[index].imageFile = req.file.filename;
+        if (evShop.items[index] && evShop.items[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(evShop.items[index].imageDeleteUrl);
+        }
+
+        evShop.items[index].imageUrl = req.imgbbImageUrl;
+        evShop.items[index].imageDeleteUrl = req.imgbbDeleteUrl;
         await evShop.save();
 
         res.status(200).json({
             success: true,
             data: evShop,
-            message: 'Shop item image uploaded successfully'
+            message: 'Shop item image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading shop item image:', error);
@@ -293,7 +341,6 @@ exports.removeShopItemImage = async (req, res) => {
         const { id, itemIndex } = req.params;
 
         const evShop = await EvShop.findById(id);
-
         if (!evShop) {
             return res.status(404).json({
                 success: false,
@@ -309,14 +356,19 @@ exports.removeShopItemImage = async (req, res) => {
             });
         }
 
+        if (evShop.items[index] && evShop.items[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(evShop.items[index].imageDeleteUrl);
+        }
+
         evShop.items[index].imageUrl = '';
+        evShop.items[index].imageDeleteUrl = null;
         evShop.items[index].imageFile = '';
         await evShop.save();
 
         res.status(200).json({
             success: true,
             data: evShop,
-            message: 'Image removed successfully'
+            message: 'Image removed successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error removing shop item image:', error);

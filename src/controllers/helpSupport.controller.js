@@ -1,5 +1,19 @@
-// evngen-backend/src/controllers/helpSupport.controller.js
+// src/controllers/helpSupport.controller.js
 const HelpSupport = require('../models/HelpSupport');
+const { deleteFromImgBB } = require('../services/imgbb.service');
+
+// ============================================
+// HELPER: Delete image from ImgBB
+// ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
 
 // ============================================
 // GET ACTIVE HELP & SUPPORT SECTION
@@ -9,7 +23,6 @@ exports.getHelpSupport = async (req, res) => {
         let helpSupport = await HelpSupport.findOne({ isActive: true });
 
         if (!helpSupport) {
-            // Create default help support section
             helpSupport = await HelpSupport.create({
                 salesCard: {
                     status: 'Sales Team Online',
@@ -103,7 +116,55 @@ exports.createHelpSupport = async (req, res) => {
             );
         }
 
-        const helpSupport = await HelpSupport.create(req.body);
+        // Parse and apply ImgBB URLs if they exist
+        const data = { ...req.body };
+        
+        // Handle sales card image
+        if (req.imgbbSalesImageUrl) {
+            data.salesCard = {
+                ...data.salesCard,
+                imageUrl: req.imgbbSalesImageUrl,
+                imageDeleteUrl: req.imgbbSalesDeleteUrl
+            };
+        }
+        
+        // Handle ticket card image
+        if (req.imgbbTicketImageUrl) {
+            data.ticketCard = {
+                ...data.ticketCard,
+                imageUrl: req.imgbbTicketImageUrl,
+                imageDeleteUrl: req.imgbbTicketDeleteUrl
+            };
+        }
+        
+        // Handle support hub card image
+        if (req.imgbbSupportImageUrl) {
+            data.supportHubCard = {
+                ...data.supportHubCard,
+                imageUrl: req.imgbbSupportImageUrl,
+                imageDeleteUrl: req.imgbbSupportDeleteUrl
+            };
+        }
+        
+        // Handle review card image
+        if (req.imgbbReviewImageUrl) {
+            data.reviewCard = {
+                ...data.reviewCard,
+                imageUrl: req.imgbbReviewImageUrl,
+                imageDeleteUrl: req.imgbbReviewDeleteUrl
+            };
+        }
+        
+        // Handle social card image
+        if (req.imgbbSocialImageUrl) {
+            data.socialCard = {
+                ...data.socialCard,
+                imageUrl: req.imgbbSocialImageUrl,
+                imageDeleteUrl: req.imgbbSocialDeleteUrl
+            };
+        }
+
+        const helpSupport = await HelpSupport.create(data);
         res.status(201).json({
             success: true,
             data: helpSupport
@@ -139,9 +200,71 @@ exports.updateHelpSupport = async (req, res) => {
             );
         }
 
+        const data = { ...req.body };
+        
+        // Handle sales card image
+        if (req.imgbbSalesImageUrl) {
+            if (helpSupport.salesCard && helpSupport.salesCard.imageDeleteUrl) {
+                await deleteImageFromImgBB(helpSupport.salesCard.imageDeleteUrl);
+            }
+            data.salesCard = {
+                ...data.salesCard,
+                imageUrl: req.imgbbSalesImageUrl,
+                imageDeleteUrl: req.imgbbSalesDeleteUrl
+            };
+        }
+        
+        // Handle ticket card image
+        if (req.imgbbTicketImageUrl) {
+            if (helpSupport.ticketCard && helpSupport.ticketCard.imageDeleteUrl) {
+                await deleteImageFromImgBB(helpSupport.ticketCard.imageDeleteUrl);
+            }
+            data.ticketCard = {
+                ...data.ticketCard,
+                imageUrl: req.imgbbTicketImageUrl,
+                imageDeleteUrl: req.imgbbTicketDeleteUrl
+            };
+        }
+        
+        // Handle support hub card image
+        if (req.imgbbSupportImageUrl) {
+            if (helpSupport.supportHubCard && helpSupport.supportHubCard.imageDeleteUrl) {
+                await deleteImageFromImgBB(helpSupport.supportHubCard.imageDeleteUrl);
+            }
+            data.supportHubCard = {
+                ...data.supportHubCard,
+                imageUrl: req.imgbbSupportImageUrl,
+                imageDeleteUrl: req.imgbbSupportDeleteUrl
+            };
+        }
+        
+        // Handle review card image
+        if (req.imgbbReviewImageUrl) {
+            if (helpSupport.reviewCard && helpSupport.reviewCard.imageDeleteUrl) {
+                await deleteImageFromImgBB(helpSupport.reviewCard.imageDeleteUrl);
+            }
+            data.reviewCard = {
+                ...data.reviewCard,
+                imageUrl: req.imgbbReviewImageUrl,
+                imageDeleteUrl: req.imgbbReviewDeleteUrl
+            };
+        }
+        
+        // Handle social card image
+        if (req.imgbbSocialImageUrl) {
+            if (helpSupport.socialCard && helpSupport.socialCard.imageDeleteUrl) {
+                await deleteImageFromImgBB(helpSupport.socialCard.imageDeleteUrl);
+            }
+            data.socialCard = {
+                ...data.socialCard,
+                imageUrl: req.imgbbSocialImageUrl,
+                imageDeleteUrl: req.imgbbSocialDeleteUrl
+            };
+        }
+
         helpSupport = await HelpSupport.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            data,
             { new: true, runValidators: true }
         );
 
@@ -171,6 +294,14 @@ exports.deleteHelpSupport = async (req, res) => {
                 success: false,
                 message: 'Help support section not found'
             });
+        }
+
+        // Delete all images from ImgBB
+        const cardTypes = ['salesCard', 'ticketCard', 'supportHubCard', 'reviewCard', 'socialCard'];
+        for (const cardType of cardTypes) {
+            if (helpSupport[cardType] && helpSupport[cardType].imageDeleteUrl) {
+                await deleteImageFromImgBB(helpSupport[cardType].imageDeleteUrl);
+            }
         }
 
         await helpSupport.deleteOne();
@@ -236,15 +367,14 @@ exports.uploadSalesCardImage = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
         const helpSupport = await HelpSupport.findById(id);
-
         if (!helpSupport) {
             return res.status(404).json({
                 success: false,
@@ -252,15 +382,18 @@ exports.uploadSalesCardImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/help-support/${req.file.filename}`;
-        helpSupport.salesCard.imageUrl = imageUrl;
-        helpSupport.salesCard.imageFile = req.file.filename;
+        if (helpSupport.salesCard && helpSupport.salesCard.imageDeleteUrl) {
+            await deleteImageFromImgBB(helpSupport.salesCard.imageDeleteUrl);
+        }
+
+        helpSupport.salesCard.imageUrl = req.imgbbImageUrl;
+        helpSupport.salesCard.imageDeleteUrl = req.imgbbDeleteUrl;
         await helpSupport.save();
 
         res.status(200).json({
             success: true,
             data: helpSupport,
-            message: 'Sales card image uploaded successfully'
+            message: 'Sales card image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading sales card image:', error);
@@ -279,15 +412,14 @@ exports.uploadTicketCardImage = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
         const helpSupport = await HelpSupport.findById(id);
-
         if (!helpSupport) {
             return res.status(404).json({
                 success: false,
@@ -295,15 +427,18 @@ exports.uploadTicketCardImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/help-support/${req.file.filename}`;
-        helpSupport.ticketCard.imageUrl = imageUrl;
-        helpSupport.ticketCard.imageFile = req.file.filename;
+        if (helpSupport.ticketCard && helpSupport.ticketCard.imageDeleteUrl) {
+            await deleteImageFromImgBB(helpSupport.ticketCard.imageDeleteUrl);
+        }
+
+        helpSupport.ticketCard.imageUrl = req.imgbbImageUrl;
+        helpSupport.ticketCard.imageDeleteUrl = req.imgbbDeleteUrl;
         await helpSupport.save();
 
         res.status(200).json({
             success: true,
             data: helpSupport,
-            message: 'Ticket card image uploaded successfully'
+            message: 'Ticket card image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading ticket card image:', error);
@@ -322,15 +457,14 @@ exports.uploadSupportHubCardImage = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
         const helpSupport = await HelpSupport.findById(id);
-
         if (!helpSupport) {
             return res.status(404).json({
                 success: false,
@@ -338,15 +472,18 @@ exports.uploadSupportHubCardImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/help-support/${req.file.filename}`;
-        helpSupport.supportHubCard.imageUrl = imageUrl;
-        helpSupport.supportHubCard.imageFile = req.file.filename;
+        if (helpSupport.supportHubCard && helpSupport.supportHubCard.imageDeleteUrl) {
+            await deleteImageFromImgBB(helpSupport.supportHubCard.imageDeleteUrl);
+        }
+
+        helpSupport.supportHubCard.imageUrl = req.imgbbImageUrl;
+        helpSupport.supportHubCard.imageDeleteUrl = req.imgbbDeleteUrl;
         await helpSupport.save();
 
         res.status(200).json({
             success: true,
             data: helpSupport,
-            message: 'Support hub card image uploaded successfully'
+            message: 'Support hub card image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading support hub card image:', error);
@@ -365,15 +502,14 @@ exports.uploadReviewCardImage = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
         const helpSupport = await HelpSupport.findById(id);
-
         if (!helpSupport) {
             return res.status(404).json({
                 success: false,
@@ -381,15 +517,18 @@ exports.uploadReviewCardImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/help-support/${req.file.filename}`;
-        helpSupport.reviewCard.imageUrl = imageUrl;
-        helpSupport.reviewCard.imageFile = req.file.filename;
+        if (helpSupport.reviewCard && helpSupport.reviewCard.imageDeleteUrl) {
+            await deleteImageFromImgBB(helpSupport.reviewCard.imageDeleteUrl);
+        }
+
+        helpSupport.reviewCard.imageUrl = req.imgbbImageUrl;
+        helpSupport.reviewCard.imageDeleteUrl = req.imgbbDeleteUrl;
         await helpSupport.save();
 
         res.status(200).json({
             success: true,
             data: helpSupport,
-            message: 'Review card image uploaded successfully'
+            message: 'Review card image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading review card image:', error);
@@ -408,15 +547,14 @@ exports.uploadSocialCardImage = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!req.file) {
+        if (!req.imgbbImageUrl) {
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided'
+                message: 'Failed to upload image: No image URL returned'
             });
         }
 
         const helpSupport = await HelpSupport.findById(id);
-
         if (!helpSupport) {
             return res.status(404).json({
                 success: false,
@@ -424,15 +562,18 @@ exports.uploadSocialCardImage = async (req, res) => {
             });
         }
 
-        const imageUrl = `/uploads/help-support/${req.file.filename}`;
-        helpSupport.socialCard.imageUrl = imageUrl;
-        helpSupport.socialCard.imageFile = req.file.filename;
+        if (helpSupport.socialCard && helpSupport.socialCard.imageDeleteUrl) {
+            await deleteImageFromImgBB(helpSupport.socialCard.imageDeleteUrl);
+        }
+
+        helpSupport.socialCard.imageUrl = req.imgbbImageUrl;
+        helpSupport.socialCard.imageDeleteUrl = req.imgbbDeleteUrl;
         await helpSupport.save();
 
         res.status(200).json({
             success: true,
             data: helpSupport,
-            message: 'Social card image uploaded successfully'
+            message: 'Social card image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading social card image:', error);
@@ -460,7 +601,6 @@ exports.removeImage = async (req, res) => {
             });
         }
 
-        // ✅ FIXED: Use a regular object without TypeScript type annotation
         const cardMap = {
             'sales': 'salesCard',
             'ticket': 'ticketCard',
@@ -477,15 +617,20 @@ exports.removeImage = async (req, res) => {
             });
         }
 
-        // Remove the image
+        // Delete image from ImgBB
+        if (helpSupport[cardKey] && helpSupport[cardKey].imageDeleteUrl) {
+            await deleteImageFromImgBB(helpSupport[cardKey].imageDeleteUrl);
+        }
+
         helpSupport[cardKey].imageUrl = '';
+        helpSupport[cardKey].imageDeleteUrl = null;
         helpSupport[cardKey].imageFile = '';
         await helpSupport.save();
 
         res.status(200).json({
             success: true,
             data: helpSupport,
-            message: 'Image removed successfully'
+            message: 'Image removed successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error removing image:', error);

@@ -1,4 +1,4 @@
-// evngen-backend/src/models/HelpSupport.js
+// src/models/HelpSupport.js
 const mongoose = require('mongoose');
 
 const socialSchema = new mongoose.Schema({
@@ -47,6 +47,10 @@ const salesCardSchema = new mongoose.Schema({
         type: String,
         default: '/images/help/need-help.jpg'
     },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
+    },
     imageFile: {
         type: String,
         default: ''
@@ -74,6 +78,10 @@ const ticketCardSchema = new mongoose.Schema({
     imageUrl: {
         type: String,
         default: '/images/help/Raise-Ticket.jpg'
+    },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
     },
     imageFile: {
         type: String,
@@ -103,6 +111,10 @@ const supportHubCardSchema = new mongoose.Schema({
         type: String,
         default: '/images/help/charge-ev_9-1.webp'
     },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
+    },
     imageFile: {
         type: String,
         default: ''
@@ -131,6 +143,10 @@ const reviewCardSchema = new mongoose.Schema({
         type: String,
         default: '/images/help/improve-our-network.jpg'
     },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
+    },
     imageFile: {
         type: String,
         default: ''
@@ -149,6 +165,10 @@ const socialCardSchema = new mongoose.Schema({
     imageUrl: {
         type: String,
         default: '/images/help/Stay-connected.jpg'
+    },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
     },
     imageFile: {
         type: String,
