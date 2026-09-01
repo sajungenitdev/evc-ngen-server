@@ -108,9 +108,10 @@ const ServiceSchema = new mongoose.Schema(
             type: String,
             required: [true, 'Category is required'],
             trim: true,
-            // ❌ REMOVE THIS LINE:
-            // enum: ['assessment', 'installation', 'maintenance', 'support', 'training', 'custom'],
-            // ✅ Instead, add a reference comment or just keep it as string
+        },
+        imageDeleteUrl: {
+            type: String,
+            default: null,
         },
     },
     {
@@ -126,7 +127,7 @@ ServiceSchema.pre('save', function (next) {
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')  // Replace non-alphanumeric with hyphens
             .replace(/^-+|-+$/g, '');      // Remove leading/trailing hyphens
-        
+
         // Add timestamp to ensure uniqueness
         this.id = slug + '-' + Date.now();
     }
