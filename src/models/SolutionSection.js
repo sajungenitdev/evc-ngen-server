@@ -13,7 +13,11 @@ const galleryImageSchema = new mongoose.Schema({
     uploadedAt: {
         type: Date,
         default: Date.now
-    }
+    },
+    imageDeleteUrl: {
+        type: String,
+        default: null
+    },
 });
 
 const solutionItemSchema = new mongoose.Schema({
@@ -46,6 +50,10 @@ const solutionItemSchema = new mongoose.Schema({
     imageUrl: {
         type: String,
         default: ''
+    },
+     imageDeleteUrl: {  // ✅ ADD THIS - for main item image
+        type: String,
+        default: null
     },
     imageFile: {
         type: String,
@@ -95,7 +103,7 @@ const solutionSectionSchema = new mongoose.Schema({
 });
 
 // Ensure only one active solution section exists
-solutionSectionSchema.pre('save', async function(next) {
+solutionSectionSchema.pre('save', async function (next) {
     if (this.isActive) {
         await this.constructor.updateMany(
             { _id: { $ne: this._id }, isActive: true },

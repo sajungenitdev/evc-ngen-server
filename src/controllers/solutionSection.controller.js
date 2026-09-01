@@ -1,5 +1,20 @@
-// evngen-backend/src/controllers/solutionSection.controller.js
+// src/controllers/solutionSection.controller.js
 const SolutionSection = require('../models/SolutionSection');
+const { deleteFromImgBB } = require('../services/imgbb.service');
+const fs = require('fs');
+
+// ============================================
+// HELPER: Delete image from ImgBB
+// ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
 
 // ============================================
 // GET ACTIVE SOLUTION SECTION
@@ -101,6 +116,9 @@ exports.getAllSolutionSections = async (req, res) => {
 // ============================================
 exports.createSolutionSection = async (req, res) => {
     try {
+        console.log('📦 Creating solution section with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', req.imgbbUrls);
+
         if (req.body.isActive) {
             await SolutionSection.updateMany(
                 { isActive: true },
@@ -108,10 +126,38 @@ exports.createSolutionSection = async (req, res) => {
             );
         }
 
-        const solutionSection = await SolutionSection.create(req.body);
+        // Parse items if they come as string
+        let items = req.body.items;
+        if (typeof items === 'string') {
+            try {
+                items = JSON.parse(items);
+            } catch (e) {
+                items = [];
+            }
+        }
+
+        // ✅ Process items with ImgBB URLs
+        const processedItems = items.map((item, index) => {
+            const processedItem = { ...item };
+            
+            // If we have an ImgBB URL for this item, use it
+            if (req.imgbbUrls && req.imgbbUrls[index]) {
+                processedItem.imageUrl = req.imgbbUrls[index];
+                processedItem.imageDeleteUrl = req.imgbbDeleteUrls?.[index] || null;
+            }
+            
+            return processedItem;
+        });
+
+        const solutionSection = await SolutionSection.create({
+            ...req.body,
+            items: processedItems
+        });
+
         res.status(201).json({
             success: true,
-            data: solutionSection
+            data: solutionSection,
+            message: 'Solution section created successfully with ImgBB hosting'
         });
     } catch (error) {
         console.error('Error creating solution section:', error);
@@ -128,7 +174,11 @@ exports.createSolutionSection = async (req, res) => {
 // ============================================
 exports.updateSolutionSection = async (req, res) => {
     try {
-        let solutionSection = await SolutionSection.findById(req.params.id);
+        const { id } = req.params;
+        console.log('📦 Updating solution section with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', req.imgbbUrls);
+
+        let solutionSection = await SolutionSection.findById(id);
 
         if (!solutionSection) {
             return res.status(404).json({
@@ -139,20 +189,55 @@ exports.updateSolutionSection = async (req, res) => {
 
         if (req.body.isActive) {
             await SolutionSection.updateMany(
-                { _id: { $ne: req.params.id }, isActive: true },
+                { _id: { $ne: id }, isActive: true },
                 { isActive: false }
             );
         }
 
+        // Parse items if they come as string
+        let items = req.body.items;
+        if (typeof items === 'string') {
+            try {
+                items = JSON.parse(items);
+            } catch (e) {
+                items = solutionSection.items || [];
+            }
+        }
+
+        // ✅ Process items with ImgBB URLs
+        // Delete old images from ImgBB for items being replaced
+        if (req.imgbbUrls && req.imgbbUrls.length > 0) {
+            for (let i = 0; i < Math.min(req.imgbbUrls.length, solutionSection.items.length); i++) {
+                if (solutionSection.items[i] && solutionSection.items[i].imageDeleteUrl) {
+                    await deleteImageFromImgBB(solutionSection.items[i].imageDeleteUrl);
+                }
+            }
+        }
+
+        const processedItems = items.map((item, index) => {
+            const processedItem = { ...item };
+            
+            if (req.imgbbUrls && req.imgbbUrls[index]) {
+                processedItem.imageUrl = req.imgbbUrls[index];
+                processedItem.imageDeleteUrl = req.imgbbDeleteUrls?.[index] || null;
+            }
+            
+            return processedItem;
+        });
+
         solutionSection = await SolutionSection.findByIdAndUpdate(
-            req.params.id,
-            req.body,
+            id,
+            {
+                ...req.body,
+                items: processedItems
+            },
             { new: true, runValidators: true }
         );
 
         res.status(200).json({
             success: true,
-            data: solutionSection
+            data: solutionSection,
+            message: 'Solution section updated successfully with ImgBB'
         });
     } catch (error) {
         console.error('Error updating solution section:', error);
@@ -178,11 +263,28 @@ exports.deleteSolutionSection = async (req, res) => {
             });
         }
 
+        // ✅ Delete all item images from ImgBB
+        if (solutionSection.items && solutionSection.items.length > 0) {
+            for (const item of solutionSection.items) {
+                if (item.imageDeleteUrl) {
+                    await deleteImageFromImgBB(item.imageDeleteUrl);
+                }
+                // Delete gallery images if they exist
+                if (item.galleryImages && item.galleryImages.length > 0) {
+                    for (const galleryImage of item.galleryImages) {
+                        if (galleryImage.imageDeleteUrl) {
+                            await deleteImageFromImgBB(galleryImage.imageDeleteUrl);
+                        }
+                    }
+                }
+            }
+        }
+
         await solutionSection.deleteOne();
 
         res.status(200).json({
             success: true,
-            message: 'Solution section deleted successfully'
+            message: 'Solution section and its images deleted successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error deleting solution section:', error);
@@ -222,7 +324,8 @@ exports.toggleSolutionSectionStatus = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            data: solutionSection
+            data: solutionSection,
+            message: `Solution section ${newStatus ? 'activated' : 'deactivated'} successfully`
         });
     } catch (error) {
         console.error('Error toggling solution section status:', error);
@@ -240,38 +343,18 @@ exports.toggleSolutionSectionStatus = async (req, res) => {
 exports.uploadSolutionImage = async (req, res) => {
     console.log('🚀 ===== UPLOAD IMAGE FUNCTION CALLED =====');
     console.log('📸 req.params:', req.params);
-    console.log('📸 req.file:', req.file);
 
     try {
         const { id, itemIndex } = req.params;
 
-        // Check if file exists
         if (!req.file) {
-            console.log('❌ No file in request!');
             return res.status(400).json({
                 success: false,
-                message: 'No image file provided. Make sure you send a file with field name "image".'
+                message: 'No image file provided.'
             });
         }
 
-        console.log('✅ File received:', req.file.originalname);
-        console.log('✅ File size:', req.file.size);
-        console.log('✅ File mimetype:', req.file.mimetype);
-
-        // Validate file type
-        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
-        if (!allowedTypes.includes(req.file.mimetype)) {
-            console.log('❌ Invalid file type:', req.file.mimetype);
-            return res.status(400).json({
-                success: false,
-                message: `Invalid file type: ${req.file.mimetype}. Allowed: ${allowedTypes.join(', ')}`
-            });
-        }
-
-        // Find the solution section
         const solutionSection = await SolutionSection.findById(id);
-        console.log('📸 Solution section found:', !!solutionSection);
-
         if (!solutionSection) {
             return res.status(404).json({
                 success: false,
@@ -279,40 +362,50 @@ exports.uploadSolutionImage = async (req, res) => {
             });
         }
 
-        // Parse and validate item index
         const index = parseInt(itemIndex);
-        console.log('📸 Index:', index, 'Total items:', solutionSection.items?.length);
-
-        if (isNaN(index) || index < 0) {
+        if (isNaN(index) || index < 0 || index >= solutionSection.items.length) {
             return res.status(400).json({
                 success: false,
-                message: 'Invalid item index. Must be a positive number.'
+                message: 'Invalid item index'
             });
         }
 
-        // Check if the item exists
-        if (!solutionSection.items || index >= solutionSection.items.length) {
+        // ✅ Upload to ImgBB
+        const { uploadToImgBB } = require('../services/imgbb.service');
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64Image = fileBuffer.toString('base64');
+
+        const result = await uploadToImgBB(
+            base64Image,
+            `solution-${Date.now()}-${index}`
+        );
+
+        if (!result.success) {
             return res.status(400).json({
                 success: false,
-                message: `Item at index ${index} not found. Total items: ${solutionSection.items?.length || 0}`
+                message: 'Failed to upload image to ImgBB: ' + result.error
             });
         }
 
-        // Generate image URL
-        const imageUrl = `/uploads/solutions/${req.file.filename}`;
+        // Delete old image from ImgBB if exists
+        if (solutionSection.items[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(solutionSection.items[index].imageDeleteUrl);
+        }
 
-        // Update the specific item's imageUrl
-        solutionSection.items[index].imageUrl = imageUrl;
-        solutionSection.items[index].imageFile = req.file.filename;
+        solutionSection.items[index].imageUrl = result.url;
+        solutionSection.items[index].imageDeleteUrl = result.deleteUrl;
         await solutionSection.save();
 
-        console.log('✅ Image uploaded successfully:', imageUrl);
+        // Clean up temp file
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
 
         res.status(200).json({
             success: true,
             data: solutionSection,
-            message: 'Image uploaded successfully',
-            imageUrl
+            message: 'Image uploaded successfully to ImgBB',
+            imageUrl: result.url
         });
     } catch (error) {
         console.error('❌ Error uploading solution image:', error);
@@ -329,26 +422,18 @@ exports.uploadSolutionImage = async (req, res) => {
 // ============================================
 exports.uploadSolutionImages = async (req, res) => {
     console.log('🚀 ===== UPLOAD MULTIPLE IMAGES CALLED =====');
-    console.log('📸 req.params:', req.params);
-    console.log('📸 req.files:', req.files);
 
     try {
         const { id, itemIndex } = req.params;
 
-        // Check if files exist
         if (!req.files || req.files.length === 0) {
-            console.log('❌ No files in request!');
             return res.status(400).json({
                 success: false,
-                message: 'No image files provided. Make sure you send files with field name "images".'
+                message: 'No image files provided.'
             });
         }
 
-        console.log(`✅ ${req.files.length} files received`);
-
-        // Find the solution section
         const solutionSection = await SolutionSection.findById(id);
-
         if (!solutionSection) {
             return res.status(404).json({
                 success: false,
@@ -369,26 +454,41 @@ exports.uploadSolutionImages = async (req, res) => {
             solutionSection.items[index].galleryImages = [];
         }
 
-        // Add each image to the gallery
+        // ✅ Upload each image to ImgBB
+        const { uploadToImgBB } = require('../services/imgbb.service');
         const uploadedImages = [];
+
         for (const file of req.files) {
-            const imageUrl = `/uploads/solutions/${file.filename}`;
-            solutionSection.items[index].galleryImages.push({
-                url: imageUrl,
-                filename: file.filename,
-                uploadedAt: new Date()
-            });
-            uploadedImages.push(imageUrl);
+            const fileBuffer = fs.readFileSync(file.path);
+            const base64Image = fileBuffer.toString('base64');
+
+            const result = await uploadToImgBB(
+                base64Image,
+                `solution-gallery-${Date.now()}-${Math.random().toString(36).substring(7)}`
+            );
+
+            if (result.success) {
+                const galleryImage = {
+                    url: result.url,
+                    imageDeleteUrl: result.deleteUrl,
+                    uploadedAt: new Date()
+                };
+                solutionSection.items[index].galleryImages.push(galleryImage);
+                uploadedImages.push(result.url);
+            }
+
+            // Clean up temp file
+            if (fs.existsSync(file.path)) {
+                fs.unlinkSync(file.path);
+            }
         }
 
         await solutionSection.save();
 
-        console.log(`✅ ${uploadedImages.length} images uploaded successfully`);
-
         res.status(200).json({
             success: true,
             data: solutionSection,
-            message: `${uploadedImages.length} images uploaded successfully`,
+            message: `${uploadedImages.length} images uploaded successfully to ImgBB`,
             uploadedImages
         });
     } catch (error) {
@@ -405,14 +505,10 @@ exports.uploadSolutionImages = async (req, res) => {
 // REMOVE SINGLE IMAGE
 // ============================================
 exports.removeSolutionImage = async (req, res) => {
-    console.log('🚀 ===== REMOVE IMAGE CALLED =====');
-    console.log('📸 req.params:', req.params);
-
     try {
         const { id, itemIndex } = req.params;
 
         const solutionSection = await SolutionSection.findById(id);
-
         if (!solutionSection) {
             return res.status(404).json({
                 success: false,
@@ -428,16 +524,19 @@ exports.removeSolutionImage = async (req, res) => {
             });
         }
 
-        solutionSection.items[index].imageUrl = '';
-        solutionSection.items[index].imageFile = '';
-        await solutionSection.save();
+        // ✅ Delete image from ImgBB
+        if (solutionSection.items[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(solutionSection.items[index].imageDeleteUrl);
+        }
 
-        console.log('✅ Image removed successfully');
+        solutionSection.items[index].imageUrl = '';
+        solutionSection.items[index].imageDeleteUrl = null;
+        await solutionSection.save();
 
         res.status(200).json({
             success: true,
             data: solutionSection,
-            message: 'Image removed successfully'
+            message: 'Image removed successfully from ImgBB'
         });
     } catch (error) {
         console.error('❌ Error removing solution image:', error);
@@ -453,14 +552,10 @@ exports.removeSolutionImage = async (req, res) => {
 // REMOVE GALLERY IMAGE
 // ============================================
 exports.removeGalleryImage = async (req, res) => {
-    console.log('🚀 ===== REMOVE GALLERY IMAGE CALLED =====');
-    console.log('📸 req.params:', req.params);
-
     try {
         const { id, itemIndex, imageIndex } = req.params;
 
         const solutionSection = await SolutionSection.findById(id);
-
         if (!solutionSection) {
             return res.status(404).json({
                 success: false,
@@ -484,16 +579,20 @@ exports.removeGalleryImage = async (req, res) => {
             });
         }
 
+        // ✅ Delete gallery image from ImgBB
+        const galleryImage = solutionSection.items[idx].galleryImages[imgIdx];
+        if (galleryImage.imageDeleteUrl) {
+            await deleteImageFromImgBB(galleryImage.imageDeleteUrl);
+        }
+
         // Remove the gallery image
         solutionSection.items[idx].galleryImages.splice(imgIdx, 1);
         await solutionSection.save();
 
-        console.log('✅ Gallery image removed successfully');
-
         res.status(200).json({
             success: true,
             data: solutionSection,
-            message: 'Gallery image removed successfully'
+            message: 'Gallery image removed successfully from ImgBB'
         });
     } catch (error) {
         console.error('❌ Error removing gallery image:', error);
