@@ -57,13 +57,17 @@ const foundationSchema = new mongoose.Schema({
     textColor: {
         type: String,
         default: '#071322'
-    }
+    },
+    imageDeleteUrl: {  // ✅ ADD THIS
+        type: String,
+        default: null
+    },
 }, {
     timestamps: true
 });
 
 // Ensure only one active foundation section exists
-foundationSchema.pre('save', async function(next) {
+foundationSchema.pre('save', async function (next) {
     if (this.isActive) {
         await this.constructor.updateMany(
             { _id: { $ne: this._id }, isActive: true },

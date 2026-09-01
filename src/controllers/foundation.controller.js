@@ -1,6 +1,47 @@
+// src/controllers/foundation.controller.js
 const Foundation = require('../models/Foundation');
-const path = require('path');
-const fs = require('fs');
+const { deleteFromImgBB } = require('../services/imgbb.service');
+
+// ============================================
+// HELPER: Delete image from ImgBB
+// ============================================
+const deleteImageFromImgBB = async (deleteUrl) => {
+    if (!deleteUrl) return;
+    try {
+        await deleteFromImgBB(deleteUrl);
+        console.log(`✅ Deleted image from ImgBB: ${deleteUrl}`);
+    } catch (error) {
+        console.error(`❌ Failed to delete image from ImgBB:`, error);
+    }
+};
+
+// ============================================
+// HELPER: Process foundation items with ImgBB URLs
+// ============================================
+const processFoundationItems = (items, imgbbUrls = []) => {
+    if (!items || !Array.isArray(items)) return items;
+    
+    return items.map((item, index) => {
+        const processedItem = { ...item };
+        
+        // If we have an ImgBB URL for this index, use it
+        if (imgbbUrls && imgbbUrls[index]) {
+            processedItem.imageUrl = imgbbUrls[index];
+            processedItem.imageDeleteUrl = imgbbDeleteUrls[index] || null;
+        }
+        
+        // Handle stringified JSON from form data
+        if (typeof item === 'string') {
+            try {
+                return JSON.parse(item);
+            } catch (e) {
+                return item;
+            }
+        }
+        
+        return processedItem;
+    });
+};
 
 // @desc    Get active foundation section
 // @route   GET /api/foundation
@@ -10,7 +51,7 @@ exports.getFoundation = async (req, res) => {
         let foundation = await Foundation.findOne({ isActive: true });
         
         if (!foundation) {
-            // Create default foundation if none exists
+            // Create default foundation with placeholder images
             foundation = await Foundation.create({
                 heading: 'Build Our Foundation',
                 subtitle: 'EVNGEN is driven by a mission to make electric energy work harder for people and the planet — engineering every product around reliability, efficiency, and long-term value.',
@@ -91,11 +132,14 @@ exports.getAllFoundation = async (req, res) => {
     }
 };
 
-// @desc    Create foundation section
+// @desc    Create foundation section with ImgBB
 // @route   POST /api/foundation
 // @access  Public (for now)
 exports.createFoundation = async (req, res) => {
     try {
+        console.log('📦 Creating foundation with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', req.imgbbUrls);
+
         // If setting as active, deactivate others
         if (req.body.isActive) {
             await Foundation.updateMany(
@@ -103,11 +147,41 @@ exports.createFoundation = async (req, res) => {
                 { isActive: false }
             );
         }
+
+        // Parse items if they come as string
+        let items = req.body.items;
+        if (typeof items === 'string') {
+            try {
+                items = JSON.parse(items);
+            } catch (e) {
+                items = [];
+            }
+        }
+
+        // ✅ Process items with ImgBB URLs
+        const processedItems = items.map((item, index) => {
+            const processedItem = { ...item };
+            
+            // If we have an ImgBB URL for this item, use it
+            if (req.imgbbUrls && req.imgbbUrls[index]) {
+                processedItem.imageUrl = req.imgbbUrls[index];
+                processedItem.imageDeleteUrl = req.imgbbDeleteUrls?.[index] || null;
+            }
+            
+            return processedItem;
+        });
+
+        const foundationData = {
+            ...req.body,
+            items: processedItems
+        };
+
+        const foundation = await Foundation.create(foundationData);
         
-        const foundation = await Foundation.create(req.body);
         res.status(201).json({
             success: true,
-            data: foundation
+            data: foundation,
+            message: 'Foundation created successfully with ImgBB hosting'
         });
     } catch (error) {
         console.error('Error creating foundation:', error);
@@ -119,12 +193,16 @@ exports.createFoundation = async (req, res) => {
     }
 };
 
-// @desc    Update foundation section
+// @desc    Update foundation section with ImgBB
 // @route   PUT /api/foundation/:id
 // @access  Public (for now)
 exports.updateFoundation = async (req, res) => {
     try {
-        let foundation = await Foundation.findById(req.params.id);
+        const { id } = req.params;
+        console.log('📦 Updating foundation with body:', req.body);
+        console.log('🖼️ ImgBB URLs:', req.imgbbUrls);
+
+        let foundation = await Foundation.findById(id);
         
         if (!foundation) {
             return res.status(404).json({
@@ -136,20 +214,59 @@ exports.updateFoundation = async (req, res) => {
         // If setting as active, deactivate others
         if (req.body.isActive) {
             await Foundation.updateMany(
-                { _id: { $ne: req.params.id }, isActive: true },
+                { _id: { $ne: id }, isActive: true },
                 { isActive: false }
             );
         }
-        
+
+        // Parse items if they come as string
+        let items = req.body.items;
+        if (typeof items === 'string') {
+            try {
+                items = JSON.parse(items);
+            } catch (e) {
+                items = foundation.items || [];
+            }
+        }
+
+        // ✅ Process items with ImgBB URLs
+        // Delete old images from ImgBB for items being replaced
+        if (req.imgbbUrls && req.imgbbUrls.length > 0) {
+            // Delete old images for items that are being updated
+            for (let i = 0; i < Math.min(req.imgbbUrls.length, foundation.items.length); i++) {
+                if (foundation.items[i] && foundation.items[i].imageDeleteUrl) {
+                    await deleteImageFromImgBB(foundation.items[i].imageDeleteUrl);
+                }
+            }
+        }
+
+        const processedItems = items.map((item, index) => {
+            const processedItem = { ...item };
+            
+            // If we have an ImgBB URL for this item, use it
+            if (req.imgbbUrls && req.imgbbUrls[index]) {
+                processedItem.imageUrl = req.imgbbUrls[index];
+                processedItem.imageDeleteUrl = req.imgbbDeleteUrls?.[index] || null;
+            }
+            
+            return processedItem;
+        });
+
+        const foundationData = {
+            ...req.body,
+            items: processedItems
+        };
+
         foundation = await Foundation.findByIdAndUpdate(
-            req.params.id,
-            req.body,
+            id,
+            foundationData,
             { new: true, runValidators: true }
         );
         
         res.status(200).json({
             success: true,
-            data: foundation
+            data: foundation,
+            message: 'Foundation updated successfully with ImgBB'
         });
     } catch (error) {
         console.error('Error updating foundation:', error);
@@ -161,7 +278,7 @@ exports.updateFoundation = async (req, res) => {
     }
 };
 
-// @desc    Delete foundation section
+// @desc    Delete foundation section with ImgBB cleanup
 // @route   DELETE /api/foundation/:id
 // @access  Public (for now)
 exports.deleteFoundation = async (req, res) => {
@@ -174,12 +291,21 @@ exports.deleteFoundation = async (req, res) => {
                 message: 'Foundation not found'
             });
         }
+
+        // ✅ Delete all item images from ImgBB
+        if (foundation.items && foundation.items.length > 0) {
+            for (const item of foundation.items) {
+                if (item.imageDeleteUrl) {
+                    await deleteImageFromImgBB(item.imageDeleteUrl);
+                }
+            }
+        }
         
         await foundation.deleteOne();
         
         res.status(200).json({
             success: true,
-            message: 'Foundation deleted successfully'
+            message: 'Foundation and its images deleted successfully from ImgBB'
         });
     } catch (error) {
         console.error('Error deleting foundation:', error);
@@ -220,7 +346,8 @@ exports.toggleFoundationStatus = async (req, res) => {
         
         res.status(200).json({
             success: true,
-            data: foundation
+            data: foundation,
+            message: `Foundation ${newStatus ? 'activated' : 'deactivated'} successfully`
         });
     } catch (error) {
         console.error('Error toggling foundation status:', error);
@@ -232,7 +359,7 @@ exports.toggleFoundationStatus = async (req, res) => {
     }
 };
 
-// @desc    Upload foundation item image
+// @desc    Upload foundation item image to ImgBB
 // @route   POST /api/foundation/:id/upload-image/:itemIndex
 // @access  Public (for now)
 exports.uploadFoundationImage = async (req, res) => {
@@ -262,18 +389,46 @@ exports.uploadFoundationImage = async (req, res) => {
                 message: 'Invalid item index'
             });
         }
+
+        // ✅ Upload to ImgBB using the service
+        const { uploadToImgBB } = require('../services/imgbb.service');
         
-        // Generate image URL
-        const imageUrl = `/uploads/foundation/${req.file.filename}`;
+        // Read the file and convert to base64
+        const fs = require('fs');
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64Image = fileBuffer.toString('base64');
         
-        // Update the specific item's imageUrl
-        foundation.items[index].imageUrl = imageUrl;
+        const result = await uploadToImgBB(
+            base64Image,
+            `foundation-${Date.now()}-${index}`
+        );
+        
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Failed to upload image to ImgBB: ' + result.error
+            });
+        }
+
+        // Delete old image from ImgBB if exists
+        if (foundation.items[index].imageDeleteUrl) {
+            await deleteImageFromImgBB(foundation.items[index].imageDeleteUrl);
+        }
+
+        // Update the specific item's imageUrl  
+        foundation.items[index].imageUrl = result.url;
+        foundation.items[index].imageDeleteUrl = result.deleteUrl;
         await foundation.save();
+
+        // Clean up temp file
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
         
         res.status(200).json({
             success: true,
             data: foundation,
-            message: 'Image uploaded successfully'
+            message: 'Image uploaded successfully to ImgBB'
         });
     } catch (error) {
         console.error('Error uploading foundation image:', error);
