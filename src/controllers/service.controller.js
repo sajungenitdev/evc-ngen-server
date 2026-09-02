@@ -243,23 +243,64 @@ exports.getServicesByCategory = async (req, res) => {
 // ============================================
 // READ - Get single service with related services
 // ============================================
+// src/controllers/service.controller.js
+
+// ============================================
+// READ - Get single service with related services (UPDATED)
+// ============================================
 exports.getService = async (req, res) => {
     try {
         const id = req.params.id;
         const decodedId = decodeURIComponent(id);
 
-        let service = await Service.findOne({ id: decodedId });
-        if (!service && mongoose.Types.ObjectId.isValid(decodedId)) {
+        let service = null;
+
+        // 1. Try by MongoDB _id
+        if (mongoose.Types.ObjectId.isValid(decodedId)) {
             service = await Service.findById(decodedId);
         }
 
+        // 2. Try exact match on id field
         if (!service) {
-            const slugPart = decodedId.split('-').slice(0, -1).join('-');
-            if (slugPart) {
-                service = await Service.findOne({
-                    id: { $regex: new RegExp(`^${slugPart}`) }
-                });
-            }
+            service = await Service.findOne({ id: decodedId });
+        }
+
+        // 3. Try by title slug (without timestamp)
+        if (!service) {
+            // Remove timestamp from the end (e.g., "help-without-the-truck-roll-123456789" -> "help-without-the-truck-roll")
+            const cleanSlug = decodedId.replace(/-\d+$/, '');
+            
+            // Find service where id starts with the clean slug
+            service = await Service.findOne({
+                id: { $regex: new RegExp(`^${cleanSlug}(?:-\\d+)?$`, 'i') }
+            });
+        }
+
+        // 4. Try by title (convert slug to title)
+        if (!service) {
+            const titleFromSlug = decodedId
+                .replace(/-/g, ' ')
+                .replace(/\d+$/, '')
+                .trim();
+            
+            service = await Service.findOne({
+                title: { $regex: new RegExp(`^${titleFromSlug}$`, 'i') }
+            });
+        }
+
+        // 5. Try by title containing the words (partial match)
+        if (!service) {
+            const words = decodedId.replace(/-/g, ' ').replace(/\d+$/, '').trim().split(' ');
+            // Build regex that matches title containing all words
+            const regex = words.map(w => `(?=.*${w})`).join('');
+            service = await Service.findOne({
+                title: { $regex: new RegExp(regex, 'i') }
+            });
+        }
+
+        // 6. Try by link field
+        if (!service) {
+            service = await Service.findOne({ link: { $regex: decodedId, $options: 'i' } });
         }
 
         if (!service) {
@@ -269,6 +310,7 @@ exports.getService = async (req, res) => {
             });
         }
 
+        // Get related services by category
         const relatedServices = await Service.find({
             _id: { $ne: service._id },
             category: service.category,
