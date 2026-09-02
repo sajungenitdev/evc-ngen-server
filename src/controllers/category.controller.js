@@ -23,11 +23,48 @@ const getProductCount = async (categoryId) => {
 };
 
 // ============================================
+// HELPER: Recursively update children status
+// ============================================
+async function updateChildrenStatus(parentId, isActive, isActiveByParent) {
+    let count = 0;
+    
+    // Find all direct children
+    const children = await Category.find({ parentId: parentId });
+    
+    for (const child of children) {
+        // Update child status
+        child.isActive = isActive;
+        child.isActiveByParent = isActiveByParent;
+        await child.save();
+        count++;
+        
+        // Recursively update grandchildren
+        const grandChildrenCount = await updateChildrenStatus(child.id, isActive, isActiveByParent);
+        count += grandChildrenCount;
+    }
+    
+    return count;
+}
+
+// ============================================
+// HELPER: Get all descendant IDs
+// ============================================
+async function getAllDescendantIds(categoryId) {
+    let ids = [];
+    const children = await Category.find({ parentId: categoryId });
+    
+    for (const child of children) {
+        ids.push(child.id);
+        const descendantIds = await getAllDescendantIds(child.id);
+        ids = [...ids, ...descendantIds];
+    }
+    
+    return ids;
+}
+
+// ============================================
 // CREATE - Create a new category
 // ============================================
-// @desc    Create a new category
-// @route   POST /api/categories
-// @access  Private/Admin
 exports.createCategory = async (req, res) => {
     try {
         const { name, description, icon, parentId, order, metaTitle, metaDescription } = req.body;
@@ -47,6 +84,9 @@ exports.createCategory = async (req, res) => {
         // Check parent category
         let parent = null;
         let level = 0;
+        let isActiveByParent = true;
+        let isActive = true;
+        
         if (parentId) {
             parent = await Category.findOne({ id: parentId });
             if (!parent) {
@@ -56,6 +96,9 @@ exports.createCategory = async (req, res) => {
                 });
             }
             level = parent.level + 1;
+            // If parent is inactive, child should also be inactive
+            isActive = parent.isActive && parent.isActiveByParent;
+            isActiveByParent = parent.isActive && parent.isActiveByParent;
         }
 
         // Create category
@@ -69,7 +112,8 @@ exports.createCategory = async (req, res) => {
             parent: parent ? parent._id : null,
             level,
             order: order || 0,
-            isActive: true,
+            isActive: isActive,
+            isActiveByParent: isActiveByParent,
             metaTitle: metaTitle || '',
             metaDescription: metaDescription || '',
         });
@@ -91,9 +135,6 @@ exports.createCategory = async (req, res) => {
 // ============================================
 // READ - Get all categories
 // ============================================
-// @desc    Get all categories
-// @route   GET /api/categories
-// @access  Public
 exports.getCategories = async (req, res) => {
     try {
         const {
@@ -138,19 +179,21 @@ exports.getCategories = async (req, res) => {
                     subcategories: subcategories || [],
                     subcategoryCount: subcategories.length,
                     productCount,
+                    effectiveStatus: category.isActive && category.isActiveByParent,
                 };
             })
         );
 
         // Get main categories with their subcategories
-        const mainCategories = await Category.find({ level: 0, isActive: true });
+        const mainCategories = await Category.find({ level: 0 });
         const categoriesTree = await Promise.all(
             mainCategories.map(async (cat) => {
-                const subs = await Category.find({ parentId: cat.id, isActive: true });
+                const subs = await Category.find({ parentId: cat.id });
                 return {
                     ...cat.toObject(),
                     subcategories: subs,
                     subcategoryCount: subs.length,
+                    effectiveStatus: cat.isActive && cat.isActiveByParent,
                 };
             })
         );
@@ -178,17 +221,14 @@ exports.getCategories = async (req, res) => {
 // ============================================
 // READ - Get category tree
 // ============================================
-// @desc    Get category tree with subcategories
-// @route   GET /api/categories/tree
-// @access  Public
 exports.getCategoryTree = async (req, res) => {
     try {
-        const mainCategories = await Category.find({ level: 0, isActive: true })
+        const mainCategories = await Category.find({ level: 0 })
             .sort({ order: 1, name: 1 });
 
         const tree = await Promise.all(
             mainCategories.map(async (category) => {
-                const subcategories = await Category.find({ parentId: category.id, isActive: true })
+                const subcategories = await Category.find({ parentId: category.id })
                     .sort({ order: 1, name: 1 });
 
                 const subcategoriesWithProducts = await Promise.all(
@@ -197,6 +237,7 @@ exports.getCategoryTree = async (req, res) => {
                         return {
                             ...sub.toObject(),
                             productCount,
+                            effectiveStatus: sub.isActive && sub.isActiveByParent,
                         };
                     })
                 );
@@ -208,6 +249,7 @@ exports.getCategoryTree = async (req, res) => {
                     subcategories: subcategoriesWithProducts,
                     subcategoryCount: subcategoriesWithProducts.length,
                     productCount,
+                    effectiveStatus: category.isActive && category.isActiveByParent,
                 };
             })
         );
@@ -228,9 +270,6 @@ exports.getCategoryTree = async (req, res) => {
 // ============================================
 // READ - Get single category
 // ============================================
-// @desc    Get single category
-// @route   GET /api/categories/:id
-// @access  Public
 exports.getCategory = async (req, res) => {
     try {
         const id = req.params.id;
@@ -248,7 +287,7 @@ exports.getCategory = async (req, res) => {
         }
 
         // Get subcategories
-        const subcategories = await Category.find({ parentId: category.id, isActive: true });
+        const subcategories = await Category.find({ parentId: category.id });
         const productCount = await getProductCount(category.id);
 
         // Get parent category if exists
@@ -265,6 +304,7 @@ exports.getCategory = async (req, res) => {
                 subcategoryCount: subcategories.length,
                 productCount,
                 parentCategory,
+                effectiveStatus: category.isActive && category.isActiveByParent,
             },
         });
     } catch (error) {
@@ -279,9 +319,6 @@ exports.getCategory = async (req, res) => {
 // ============================================
 // UPDATE - Update category
 // ============================================
-// @desc    Update category
-// @route   PUT /api/categories/:id
-// @access  Private/Admin
 exports.updateCategory = async (req, res) => {
     try {
         const id = req.params.id;
@@ -314,6 +351,10 @@ exports.updateCategory = async (req, res) => {
         }
 
         // Check parent category (prevent circular reference)
+        let newParent = null;
+        let newLevel = 0;
+        let newIsActiveByParent = true;
+        
         if (parentId && parentId !== category.id) {
             const parent = await Category.findOne({ id: parentId });
             if (!parent) {
@@ -328,12 +369,17 @@ exports.updateCategory = async (req, res) => {
                     message: 'Cannot set a category as its own parent',
                 });
             }
-            if (category.level === 0 && parent.level > 0) {
+            // Check if parent is in the category's descendants (circular reference)
+            const descendants = await getAllDescendantIds(category.id);
+            if (descendants.includes(parentId)) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Main category cannot have a subcategory as parent',
+                    message: 'Cannot set a descendant as parent (would create circular reference)',
                 });
             }
+            newParent = parent;
+            newLevel = parent.level + 1;
+            newIsActiveByParent = parent.isActive && parent.isActiveByParent;
         }
 
         // Update fields
@@ -347,20 +393,43 @@ exports.updateCategory = async (req, res) => {
         if (parentId !== undefined) {
             category.parentId = parentId;
             if (parentId) {
-                const parent = await Category.findOne({ id: parentId });
-                category.parent = parent ? parent._id : null;
-                category.level = parent ? parent.level + 1 : 0;
+                category.parent = newParent ? newParent._id : null;
+                category.level = newLevel;
+                category.isActiveByParent = newIsActiveByParent;
+                // If parent is inactive, child should be inactive
+                if (!newIsActiveByParent) {
+                    category.isActive = false;
+                }
             } else {
                 category.parent = null;
                 category.level = 0;
+                category.isActiveByParent = true;
             }
         }
         if (order !== undefined) category.order = order;
-        if (isActive !== undefined) category.isActive = isActive;
+        if (isActive !== undefined) {
+            // Only allow activation if parent is active
+            if (isActive && !category.isActiveByParent) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot activate category because parent is inactive',
+                });
+            }
+            category.isActive = isActive;
+        }
         if (metaTitle !== undefined) category.metaTitle = metaTitle;
         if (metaDescription !== undefined) category.metaDescription = metaDescription;
 
         await category.save();
+
+        // If category status changed, update all children
+        if (isActive !== undefined) {
+            const childrenUpdated = await updateChildrenStatus(
+                category.id, 
+                category.isActive && category.isActiveByParent,
+                category.isActiveByParent
+            );
+        }
 
         res.json({
             success: true,
@@ -379,9 +448,6 @@ exports.updateCategory = async (req, res) => {
 // ============================================
 // DELETE - Delete category
 // ============================================
-// @desc    Delete category
-// @route   DELETE /api/categories/:id
-// @access  Private/Admin
 exports.deleteCategory = async (req, res) => {
     try {
         const id = req.params.id;
@@ -433,12 +499,73 @@ exports.deleteCategory = async (req, res) => {
 };
 
 // ============================================
-// TOGGLE - Toggle category status
+// TOGGLE - Toggle category status with cascade
 // ============================================
-// @desc    Toggle category active status
-// @route   PUT /api/categories/:id/toggle
-// @access  Private/Admin
 exports.toggleCategoryStatus = async (req, res) => {
+    try {
+        const id = req.params.id;
+
+        let category = await Category.findOne({ id: id });
+        if (!category) {
+            category = await Category.findById(id);
+        }
+
+        if (!category) {
+            return res.status(404).json({
+                success: false,
+                message: 'Category not found',
+            });
+        }
+
+        // Check if parent is inactive and we're trying to activate
+        const newStatus = !category.isActive;
+        if (newStatus && !category.isActiveByParent) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot activate category because parent is inactive',
+                parentInactive: true,
+            });
+        }
+
+        // Toggle the status
+        category.isActive = newStatus;
+        await category.save();
+
+        // Recursively update all children with the same status
+        const childrenUpdated = await updateChildrenStatus(
+            category.id,
+            newStatus,
+            category.isActiveByParent
+        );
+
+        // Get updated category with children
+        const updatedCategory = await Category.findOne({ id: category.id });
+        const children = await Category.find({ parentId: category.id });
+
+        res.json({
+            success: true,
+            message: `Category ${newStatus ? 'activated' : 'deactivated'} with ${childrenUpdated} subcategories`,
+            data: {
+                category: {
+                    ...updatedCategory.toObject(),
+                    childrenUpdated,
+                    children: children,
+                },
+            },
+        });
+    } catch (error) {
+        console.error('Toggle category status error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+};
+
+// ============================================
+// TOGGLE - Toggle category status without cascade
+// ============================================
+exports.toggleCategoryStatusOnly = async (req, res) => {
     try {
         const id = req.params.id;
 
@@ -474,9 +601,6 @@ exports.toggleCategoryStatus = async (req, res) => {
 // ============================================
 // BULK - Delete multiple categories
 // ============================================
-// @desc    Delete multiple categories
-// @route   DELETE /api/categories/bulk
-// @access  Private/Admin
 exports.deleteMultipleCategories = async (req, res) => {
     try {
         const { ids } = req.body;
@@ -527,6 +651,92 @@ exports.deleteMultipleCategories = async (req, res) => {
         });
     } catch (error) {
         console.error('Delete multiple categories error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+};
+
+// ============================================
+// BULK - Update multiple categories status with cascade
+// ============================================
+exports.bulkUpdateStatus = async (req, res) => {
+    try {
+        const { categoryIds, isActive, cascade = true } = req.body;
+
+        if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide an array of category IDs',
+            });
+        }
+
+        let allCategoryIds = [...categoryIds];
+        let totalUpdated = 0;
+
+        // If cascade is true, get all descendants
+        if (cascade) {
+            for (const id of categoryIds) {
+                const descendants = await getAllDescendantIds(id);
+                allCategoryIds = [...allCategoryIds, ...descendants];
+            }
+        }
+
+        // Remove duplicates
+        allCategoryIds = [...new Set(allCategoryIds)];
+
+        // Check if any category has inactive parent when trying to activate
+        if (isActive) {
+            for (const id of allCategoryIds) {
+                const category = await Category.findOne({ id: id });
+                if (category && !category.isActiveByParent) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Cannot activate category "${category.name}" because parent is inactive`,
+                        categoryId: id,
+                        categoryName: category.name,
+                    });
+                }
+            }
+        }
+
+        // Update all categories
+        for (const id of allCategoryIds) {
+            const category = await Category.findOne({ id: id });
+            if (category) {
+                category.isActive = isActive;
+                // If deactivating, children will be handled by cascade
+                await category.save();
+                totalUpdated++;
+            }
+        }
+
+        // If cascade is true, update all children recursively
+        if (cascade) {
+            for (const id of allCategoryIds) {
+                const category = await Category.findOne({ id: id });
+                if (category) {
+                    const childrenUpdated = await updateChildrenStatus(
+                        category.id,
+                        isActive,
+                        category.isActiveByParent
+                    );
+                    totalUpdated += childrenUpdated;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `Updated ${totalUpdated} categories`,
+            data: {
+                totalUpdated,
+                categoryIds: allCategoryIds,
+            },
+        });
+    } catch (error) {
+        console.error('Bulk update status error:', error);
         res.status(500).json({
             success: false,
             message: error.message,

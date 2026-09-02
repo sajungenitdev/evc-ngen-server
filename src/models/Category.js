@@ -53,6 +53,10 @@ const CategorySchema = new mongoose.Schema(
             type: Boolean,
             default: true,
         },
+        isActiveByParent: {
+            type: Boolean,
+            default: true, // Tracks if parent is active
+        },
         productCount: {
             type: Number,
             default: 0,
@@ -76,6 +80,8 @@ CategorySchema.index({ name: 'text' });
 CategorySchema.index({ parentId: 1 });
 CategorySchema.index({ level: 1 });
 CategorySchema.index({ slug: 1 });
+CategorySchema.index({ isActive: 1 });
+CategorySchema.index({ isActiveByParent: 1 });
 
 // Pre-save middleware to generate slug and id
 CategorySchema.pre('save', function (next) {
@@ -101,6 +107,11 @@ CategorySchema.virtual('parentCategory', {
     localField: 'parentId',
     foreignField: 'id',
     justOne: true,
+});
+
+// Virtual for effective status (considering parent status)
+CategorySchema.virtual('effectiveStatus').get(function() {
+    return this.isActive && this.isActiveByParent;
 });
 
 // Remove sensitive data from JSON response
