@@ -9,6 +9,12 @@ const BrandSchema = new mongoose.Schema(
             unique: true,
             trim: true,
         },
+        slug: {
+            type: String,
+            unique: true,
+            trim: true,
+            index: true,
+        },
         name: {
             type: String,
             required: [true, 'Brand name is required'],
@@ -74,12 +80,29 @@ const BrandSchema = new mongoose.Schema(
 // Indexes for better query performance
 BrandSchema.index({ name: 'text' });
 BrandSchema.index({ isActive: 1 });
+BrandSchema.index({ slug: 1 });
+BrandSchema.index({ id: 1 });
 
-// Pre-save middleware to generate id if not provided
+// Pre-save middleware to generate id and slug if not provided
 BrandSchema.pre('save', function (next) {
-    if (!this.id) {
-        this.id = this.name.toLowerCase().replace(/\s+/g, '-');
+    // Generate slug from name
+    const slug = this.name
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^\w\-]+/g, '')
+        .replace(/\-\-+/g, '-')
+        .replace(/^-+/, '')
+        .replace(/-+$/, '');
+    
+    if (!this.slug) {
+        this.slug = slug;
     }
+    
+    if (!this.id) {
+        this.id = slug;
+    }
+    
     next();
 });
 

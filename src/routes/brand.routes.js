@@ -15,7 +15,7 @@ const { protect, admin } = require('../middleware/auth');
 
 // Public routes
 router.get('/', getBrands);
-router.get('/:id', getBrand);
+router.get('/:id', getBrand);  // This should work with both id AND slug
 router.get('/:id/products', getBrandProducts);
 
 // Admin only routes

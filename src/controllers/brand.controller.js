@@ -128,8 +128,10 @@ exports.getBrands = async (req, res) => {
     }
 };
 
+// src/controllers/brand.controller.js
+
 // ============================================
-// READ - Get single brand
+// READ - Get single brand (UPDATED)
 // ============================================
 // @desc    Get single brand
 // @route   GET /api/brands/:id
@@ -138,12 +140,27 @@ exports.getBrand = async (req, res) => {
     try {
         const id = req.params.id;
 
-        // Try to find by id field first, then by _id
-        let brand = await Brand.findOne({ id: id });
+        // Try multiple lookup methods
+        let brand = null;
 
+        // 1. Try by id field
+        brand = await Brand.findOne({ id: id });
+
+        // 2. If not found, try by slug
         if (!brand) {
-            // If not found by id, try by _id
+            brand = await Brand.findOne({ slug: id });
+        }
+
+        // 3. If not found, try by _id (MongoDB ObjectId)
+        if (!brand && /^[0-9a-fA-F]{24}$/.test(id)) {
             brand = await Brand.findById(id);
+        }
+
+        // 4. If still not found, try by name (case insensitive)
+        if (!brand) {
+            brand = await Brand.findOne({
+                name: { $regex: new RegExp(`^${id}$`, 'i') }
+            });
         }
 
         if (!brand) {
@@ -179,19 +196,24 @@ exports.getBrand = async (req, res) => {
     }
 };
 
-// ============================================
-// READ - Get brand products
-// ============================================
-// @desc    Get all products for a brand
-// @route   GET /api/brands/:id/products
-// @access  Public
+// Also update getBrandProducts to support slug
 exports.getBrandProducts = async (req, res) => {
     try {
         const id = req.params.id;
 
-        // Try to find by id field first, then by _id
-        let brand = await Brand.findOne({ id: id });
+        // Try multiple lookup methods
+        let brand = null;
+
+        // 1. Try by id field
+        brand = await Brand.findOne({ id: id });
+
+        // 2. If not found, try by slug
         if (!brand) {
+            brand = await Brand.findOne({ slug: id });
+        }
+
+        // 3. If not found, try by _id
+        if (!brand && /^[0-9a-fA-F]{24}$/.test(id)) {
             brand = await Brand.findById(id);
         }
 
