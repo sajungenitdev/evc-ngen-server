@@ -220,22 +220,53 @@ exports.getIndustries = async (req, res) => {
 // ============================================
 // READ - Get single industry
 // ============================================
+// src/controllers/industry.controller.js
+
 exports.getIndustry = async (req, res) => {
     try {
         const id = req.params.id;
+        // ✅ Decode the URL parameter
+        const decodedId = decodeURIComponent(id);
 
-        let industry = await Industry.findOne({ id: id });
+        console.log('🔍 Looking for industry:', {
+            raw: id,
+            decoded: decodedId
+        });
+
+        let industry = null;
+
+        // 1. Try by id field (exact match)
+        industry = await Industry.findOne({ id: decodedId });
+
+        // 2. Try by slug
         if (!industry) {
-            industry = await Industry.findOne({ slug: id });
+            industry = await Industry.findOne({ slug: decodedId });
         }
-        if (!industry && mongoose.Types.ObjectId.isValid(id)) {
-            industry = await Industry.findById(id);
+
+        // 3. Try by _id (if valid ObjectId)
+        if (!industry && mongoose.Types.ObjectId.isValid(decodedId)) {
+            industry = await Industry.findById(decodedId);
+        }
+
+        // 4. Try by label (case insensitive)
+        if (!industry) {
+            industry = await Industry.findOne({
+                label: { $regex: new RegExp(`^${decodedId}$`, 'i') }
+            });
+        }
+
+        // 5. Try by replacing hyphens with spaces
+        if (!industry) {
+            const searchTerm = decodedId.replace(/-/g, ' ').replace(/&/g, '&');
+            industry = await Industry.findOne({
+                label: { $regex: new RegExp(`^${searchTerm}$`, 'i') }
+            });
         }
 
         if (!industry) {
             return res.status(404).json({
                 success: false,
-                message: 'Industry not found'
+                message: `Industry not found for ID: ${decodedId}`
             });
         }
 
